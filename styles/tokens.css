@@ -1,0 +1,110 @@
+/* Dark theme (default) */
+:root {
+  --bg-base:        #0d1117;
+  --bg-surface:     #161b22;
+  --bg-overlay:     #1c2230;
+  --border:         #30363d;
+  --text-primary:   #e6edf3;
+  --text-secondary: #8b949e;
+  --text-muted:     #484f58;
+  --accent-blue:    #429edb;
+  --accent-cyan:    #56d4e8;
+  --accent-yellow:  #ffde59;
+  --accent-purple:  #a78bfa;
+  --accent-red:     #ff3131;
+  --accent-orange:  #dc8c32;
+  --accent-pink:    #e850a0;
+  --accent-green:   #3fb950;
+  --sidebar-bg:     #0d1117;
+  --sidebar-active: #1c2230;
+  --sidebar-text:   #8b949e;
+  --sidebar-active-text: #e6edf3;
+  --btn-primary-bg: #429edb;
+  --btn-primary-text: #fff;
+  --input-bg:       #0d1117;
+  --input-border:   #30363d;
+  --shadow:         0 1px 3px rgba(0,0,0,0.4);
+}
+
+/* Light theme */
+[data-theme="light"] {
+  --bg-base:        #f6f8fa;
+  --bg-surface:     #ffffff;
+  --bg-overlay:     #f0f2f5;
+  --border:         #d0d7de;
+  --text-primary:   #1f2328;
+  --text-secondary: #656d76;
+  --text-muted:     #9198a1;
+  --sidebar-bg:     #ffffff;
+  --sidebar-active: #f0f2f5;
+  --sidebar-text:   #656d76;
+  --sidebar-active-text: #1f2328;
+  --btn-primary-bg: #0969da;
+  --btn-primary-text: #fff;
+  --input-bg:       #ffffff;
+  --input-border:   #d0d7de;
+  --shadow:         0 1px 3px rgba(0,0,0,0.12);
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+a { color: var(--accent-blue); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+button {
+  background: var(--btn-primary-bg);
+  color: var(--btn-primary-text);
+  border: 0;
+  padding: 8px 16px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+button.btn-secondary {
+  background: var(--bg-overlay);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+}
+
+button.btn-ghost {
+  background: transparent;
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+}
+
+input, select, textarea {
+  background: var(--input-bg);
+  color: var(--text-primary);
+  border: 1px solid var(--input-border);
+  border-radius: 6px;
+  padding: 8px 12px;
+  font-size: 14px;
+  width: 100%;
+}
+
+input:focus, select:focus, textarea:focus {
+  outline: none;
+  border-color: var(--accent-blue);
+  box-shadow: 0 0 0 3px rgba(66,158,219,0.15);
+}
+
+label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 4px;
+}

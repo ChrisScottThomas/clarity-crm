@@ -1,0 +1,152 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client"
+  output   = "../app/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+model Company {
+  id        String   @id @default(cuid())
+  name      String
+  website   String?
+  notes     String?
+  createdAt DateTime @default(now())
+  leads     Lead[]
+  meetings  Meeting[]
+}
+
+model Lead {
+  id                  String    @id @default(cuid())
+  name                String
+  companyName         String?
+  email               String?
+  linkedinUrl         String?
+  website             String?
+  owner               String?
+  track               String?
+  source              String?
+  stage               String    @default("New Lead")
+  stageChangedAt      DateTime  @default(now())
+  nextAction          String?
+  relationship        String    @default("contact")
+  monthlyValue        Float?
+  contactAdded        DateTime  @default(now())
+  dateContacted       DateTime?
+  callDate            DateTime?
+  followUpDate        DateTime?
+  closedDate          DateTime?
+  intakeFormReceived  Boolean   @default(false)
+  notes               String?
+  scalingRoadmapStage String?
+  primaryConstraint   String?
+  businessDebt        String?
+  graduationCriterion String?
+  companyId           String?
+  company             Company?  @relation(fields: [companyId], references: [id])
+  openLoops           OpenLoop[]
+  aiScore             Int?
+  aiScoreLabel        String?
+  aiSummary           String?
+  aiRecommendation    String?
+  meetings            Meeting[]
+  timeEntries         TimeEntry[]
+  conversations       Conversation[]
+  externalEvents      ExternalEvent[]
+}
+
+model OpenLoop {
+  id          String   @id @default(cuid())
+  leadId      String
+  lead        Lead     @relation(fields: [leadId], references: [id])
+  description String
+  direction   String   @default("owed-from")
+  done        Boolean  @default(false)
+  dueDate     DateTime?
+}
+
+model Setting {
+  key   String @id
+  value String
+}
+
+model Meeting {
+  id          String    @id @default(cuid())
+  title       String
+  date        DateTime
+  duration    Int?
+  notes       String?
+  leadId      String?
+  lead        Lead?     @relation(fields: [leadId], references: [id])
+  companyId   String?
+  company     Company?  @relation(fields: [companyId], references: [id])
+  createdAt   DateTime  @default(now())
+  externalId  String?   @unique // cal.com booking uid; idempotency + lookup key
+  source      String    @default("manual") // 'manual' | 'cal.com'
+  status      String    @default("confirmed") // 'confirmed' | 'cancelled'
+  cancelledAt DateTime?
+  conversations Conversation[]
+}
+
+model TimeEntry {
+  id          String   @id @default(cuid())
+  description String
+  minutes     Int
+  date        DateTime @default(now())
+  leadId      String?
+  lead        Lead?    @relation(fields: [leadId], references: [id])
+  createdAt   DateTime @default(now())
+}
+
+model Conversation {
+  id        String   @id @default(cuid())
+  type      String   @default("note")   // note | call | email | linkedin
+  source    String   @default("manual") // manual | cal.com | workflow | linkedin
+  body      String
+  leadId    String
+  lead      Lead     @relation(fields: [leadId], references: [id])
+  meetingId String?
+  meeting   Meeting? @relation(fields: [meetingId], references: [id])
+  externalId String? @unique // provider message id — idempotency for synced email; null for manual/workflow/cal.com
+  createdAt DateTime @default(now())
+}
+
+model WorkflowRule {
+  id        String   @id @default(cuid())
+  name      String
+  trigger   String
+  action    String
+  enabled   Boolean  @default(true)
+  createdAt DateTime @default(now())
+  runs      WorkflowRun[]
+}
+
+model WorkflowRun {
+  id        String       @id @default(cuid())
+  ruleId    String
+  rule      WorkflowRule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+  trigger   String
+  action    String
+  leadId    String?
+  status    String       // 'success' | 'skipped' | 'error'
+  detail    String?
+  createdAt DateTime     @default(now())
+}
+
+model ExternalEvent {
+  id         String   @id @default(cuid())
+  source     String   @default("outlook") // provider tag; future-proofs for google etc.
+  externalId String   @unique // provider event id — idempotency key
+  title      String
+  start      DateTime
+  end        DateTime
+  attendees  String // JSON-encoded string[] (SQLite has no array type)
+  leadId     String?
+  lead       Lead?    @relation(fields: [leadId], references: [id])
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
