@@ -16,9 +16,9 @@ jobs:
     name: Typecheck · Test · Build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
@@ -52,17 +52,18 @@ jobs:
   lint:
     name: Lint (report-only)
     runs-on: ubuntu-latest
-    # Non-blocking for now: main still carries pre-existing no-explicit-any
-    # debt. Cleaning that up so this can gate is a task in the testing-and-CI
-    # plan. Until then the report is visible without blocking every PR.
-    continue-on-error: true
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
       - run: npm ci
       - run: npx prisma generate
-      - name: ESLint
-        run: npx eslint .
+      # Report-only for now: main still carries pre-existing no-explicit-any
+      # debt (task L1 in the testing-and-CI plan). The step surfaces issues as a
+      # warning annotation but exits 0 on purpose — a RED check must always mean
+      # a real, blocking failure. Flip this to a plain `npx eslint .` once the
+      # debt is cleared, to make lint gate.
+      - name: ESLint (report-only)
+        run: npx eslint . || echo "::warning title=ESLint (report-only)::lint found issues — non-blocking; tracked as task L1 in docs/superpowers/plans/2026-07-22-testing-and-ci-plan.md"
