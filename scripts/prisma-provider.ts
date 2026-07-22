@@ -47,7 +47,12 @@ function main(): void {
   const provider = providerForUrl(url)
   console.log(`prisma-provider: DATABASE_URL is ${provider} — running \`prisma ${args.join(' ')}\``)
   const status = withProvider('prisma/schema.prisma', provider, () => {
-    const result = spawnSync('npx', ['prisma', ...args], { stdio: 'inherit' })
+    const result = spawnSync('npx', ['prisma', ...args], {
+      stdio: 'inherit',
+      // prisma.config.ts reads DATABASE_URL with no fallback of its own, so the
+      // resolved (possibly defaulted) URL must reach the child process.
+      env: { ...process.env, DATABASE_URL: url },
+    })
     if (result.error) console.error(result.error.message)
     return result.status ?? 1
   })
