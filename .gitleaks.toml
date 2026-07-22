@@ -1,0 +1,22 @@
+# gitleaks config — extends the built-in ruleset, with an allowlist for the
+# obvious non-secrets so placeholders don't produce red herrings.
+title = "clarity-crm"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Documented placeholders and CI dummy values are not real secrets"
+paths = [
+  '''\.env\.example''',
+  '''\.github/workflows/.*''',
+  '''\.gitleaks\.toml''',
+  '''scripts/check-white-label\.mjs''',
+]
+# Dev/CI placeholder values referenced in docs and examples.
+regexes = [
+  '''dev-insecure-secret-do-not-use-in-production''',
+  '''dev-only-.*''',
+  '''ci-not-a-real-.*''',
+  '''clarity-dev''',
+]

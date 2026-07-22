@@ -1,0 +1,48 @@
+name: Security
+
+# Catch two classes of leak on every PR:
+#   - secrets/keys/tokens (gitleaks)
+#   - real attribution / PII and committed data files (white-label guard)
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  secret-scan:
+    name: Secret scan (gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history so a secret in any commit is caught
+
+      # Run the gitleaks binary directly rather than the Action: the Action
+      # requires a paid GITLEAKS_LICENSE for private/org repos, and this repo is
+      # private. The CLI has no such requirement.
+      - name: Run gitleaks
+        run: |
+          set -euo pipefail
+          VERSION=8.21.2
+          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${VERSION}/gitleaks_${VERSION}_linux_x64.tar.gz" -o gitleaks.tar.gz
+          tar -xzf gitleaks.tar.gz gitleaks
+          ./gitleaks git . --config .gitleaks.toml --redact --verbose --no-banner
+
+  white-label:
+    name: White-label integrity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # Reads WHITE_LABEL_DENYLIST if configured (a repo secret of real
+      # names/domains, never committed). Skipped-with-notice when unset.
+      - name: Check for real PII / attribution / committed data
+        run: node scripts/check-white-label.mjs
+        env:
+          WHITE_LABEL_DENYLIST: ${{ secrets.WHITE_LABEL_DENYLIST }}
