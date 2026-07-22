@@ -1,17 +1,49 @@
-export const STAGES = [
-  'New Lead', 'Contacted', 'Replied', 'Call Booked', 'Call Done', 'Closed Won', 'Closed Lost',
-] as const
+// Derived, typed views over `clarity.config.ts`.
+//
+// Consumers import their vocab from here (not the config directly) so the
+// compile-time union types (`Stage`, `Owner`, `Constraint`, …) live in one
+// place. Editing vocab/branding happens in `clarity.config.ts`; this file only
+// re-shapes it. The exceptions below (relationships, source labels, team
+// mailboxes) are infrastructure — not fork-editable brand vocab.
+
+import { clarityConfig } from '../clarity.config'
+
+export const STAGES = clarityConfig.stages
 export type Stage = typeof STAGES[number]
 
-export const OWNERS = ['Alex', 'Jordan'] as const
+export const OWNERS = clarityConfig.owners
 export type Owner = typeof OWNERS[number]
 
-export const TRACKS = ['Strategic / Commercial', 'Operations / Teams'] as const
+export const TRACKS = clarityConfig.tracks
 
-export const SOURCES = [
-  'Warm DM', 'Referral', 'Content Inbound', 'FounderON', 'Cold Outreach',
-  'LinkedIn', 'Inbound', 'Event', 'Networking', 'cal.com',
-] as const
+export const SOURCES = clarityConfig.sources
+
+export const NEXT_ACTIONS = clarityConfig.nextActions
+
+export const CONSTRAINTS = clarityConfig.constraints
+export type Constraint = typeof CONSTRAINTS[number]
+// Typed as a total map over Constraint: adding a constraint without a colour is
+// a compile error, which is exactly the loud failure a fork should get.
+export const CONSTRAINT_COLORS: Record<Constraint, string> = clarityConfig.constraintColors
+
+export const BUSINESS_DEBTS = clarityConfig.businessDebts
+export const DEBT_COLORS = clarityConfig.debtColors
+
+export const ROADMAP_STAGES = clarityConfig.roadmapStages
+
+export const BRAND = clarityConfig.brand.colors
+
+/** Whether the proprietary business-diagnostic framework is surfaced in the UI. */
+export const DIAGNOSTICS_ENABLED: boolean = clarityConfig.diagnosticsEnabled
+
+// --- Not fork-editable ------------------------------------------------------
+
+// Relationship is load-bearing: `client` gates the "never auto-set" guardrail
+// (lib/leads.ts) and the call→client conversion rate (lib/analytics.ts), so it
+// stays fixed here rather than in the tenant config.
+export const RELATIONSHIPS = ['contact', 'prospect', 'client', 'peer', 'advisory', 'inactive'] as const
+export type Relationship = typeof RELATIONSHIPS[number]
+export const DEFAULT_RELATIONSHIP: Relationship = 'contact'
 
 // Human-readable labels for an Activity entry's provenance (Conversation.source).
 export const SOURCE_LABELS: Record<string, string> = {
@@ -25,30 +57,3 @@ export const TEAM_EMAILS: readonly string[] = (process.env.TEAM_EMAILS ?? 'alex@
   .split(',')
   .map((e) => e.trim().toLowerCase())
   .filter(Boolean)
-
-export const NEXT_ACTIONS = [
-  'Research contact', 'Send message', 'Follow up', 'Book call', 'Prepare call',
-  'Send recap', 'Send proposal', 'Awaiting reply', 'Nurture', 'No action',
-] as const
-
-export const RELATIONSHIPS = ['contact', 'prospect', 'client', 'peer', 'advisory', 'inactive'] as const
-export type Relationship = typeof RELATIONSHIPS[number]
-export const DEFAULT_RELATIONSHIP: Relationship = 'contact'
-
-export const CONSTRAINTS = ['Money', 'Market', 'Model', 'Manpower', 'Metrics', 'More'] as const
-export type Constraint = typeof CONSTRAINTS[number]
-
-export const CONSTRAINT_COLORS: Record<Constraint, string> = {
-  More: '#56d4e8', Money: '#ffde59', Metrics: '#a78bfa',
-  Manpower: '#ff3131', Market: '#dc8c32', Model: '#e850a0',
-}
-
-export const BUSINESS_DEBTS = ['Ignorance debt', 'Avoidance debt', 'Experience debt'] as const
-export const DEBT_COLORS = { 'Ignorance debt': '#5271ff', 'Avoidance debt': '#34d399' } as const
-
-export const ROADMAP_STAGES = [
-  '0 (Improvise)', '1 (Monetize)', '2 (Advertise)', '3 (Stabilize)', '4 (Prioritize)',
-  '5 (Productize)', '6 (Optimize)', '7 (Scale)', '8 (Scale)', '9 (Scale)',
-] as const
-
-export const BRAND = { midnight: '#020f31', text: '#ffffff', blue: '#429edb' } as const
