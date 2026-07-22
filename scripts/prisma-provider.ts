@@ -30,8 +30,10 @@ export function rewriteProvider(schemaSource: string, provider: DbProvider): str
   return schemaSource.replace(pattern, `$1${provider}$2`)
 }
 
-// Rewrite the schema's provider, run `fn`, and ALWAYS restore the original
-// file — the committed schema (provider "sqlite") must never stay dirty.
+// Rewrite the schema's provider, run `fn`, and restore the original file via
+// try/finally. Note: SIGKILL/Ctrl-C mid-spawn can kill before finally runs, leaving
+// the schema modified (recover with `git checkout`); concurrent invocations race on
+// the same file.
 export function withProvider<T>(schemaPath: string, provider: DbProvider, fn: () => T): T {
   const original = readFileSync(schemaPath, 'utf8')
   writeFileSync(schemaPath, rewriteProvider(original, provider))
@@ -55,6 +57,7 @@ function main(): void {
   console.log(`prisma-provider: DATABASE_URL is ${provider} — running \`prisma ${args.join(' ')}\``)
   const status = withProvider('prisma/schema.prisma', provider, () => {
     const result = spawnSync('npx', ['prisma', ...args], { stdio: 'inherit' })
+    if (result.error) console.error(result.error.message)
     return result.status ?? 1
   })
   process.exit(status)
