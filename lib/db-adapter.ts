@@ -5,19 +5,25 @@
 
 export const DEFAULT_DATABASE_URL = 'file:./data/clarity.db'
 
+export type DbProvider = 'sqlite' | 'postgresql'
+
 export type AdapterChoice =
   | { kind: 'sqlite'; url: string }
   | { kind: 'postgresql'; connectionString: string; max: number | undefined }
 
+export function providerForUrl(url: string): DbProvider {
+  if (url.startsWith('file:')) return 'sqlite'
+  if (url.startsWith('postgres://') || url.startsWith('postgresql://')) return 'postgresql'
+  throw new Error(
+    `Unsupported DATABASE_URL "${url}" — use file: (SQLite) or postgres:// / postgresql:// (Postgres)`,
+  )
+}
+
 export function chooseAdapter(url: string | undefined, poolMax?: string): AdapterChoice {
   const resolved = url ?? DEFAULT_DATABASE_URL
-  if (resolved.startsWith('file:')) return { kind: 'sqlite', url: resolved }
-  if (resolved.startsWith('postgres://') || resolved.startsWith('postgresql://')) {
-    return { kind: 'postgresql', connectionString: resolved, max: parsePoolMax(poolMax) }
-  }
-  throw new Error(
-    `Unsupported DATABASE_URL "${resolved}" — use file: (SQLite) or postgres:// / postgresql:// (Postgres)`,
-  )
+  return providerForUrl(resolved) === 'sqlite'
+    ? { kind: 'sqlite', url: resolved }
+    : { kind: 'postgresql', connectionString: resolved, max: parsePoolMax(poolMax) }
 }
 
 // Pool sizing matters at scale: long-lived containers can afford the pg

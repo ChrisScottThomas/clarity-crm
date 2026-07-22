@@ -1,7 +1,7 @@
 import { spawnSync } from 'node:child_process'
 import { readFileSync, writeFileSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
-import { DEFAULT_DATABASE_URL } from '../lib/db-adapter'
+import { DEFAULT_DATABASE_URL, DbProvider, providerForUrl } from '../lib/db-adapter'
 
 // Prisma bakes the datasource `provider` into the generated client, and
 // `provider = env(...)` is invalid (P1012) — so dual-provider support means
@@ -9,17 +9,7 @@ import { DEFAULT_DATABASE_URL } from '../lib/db-adapter'
 // prisma command, then restoring it. See
 // docs/superpowers/specs/2026-07-22-phase-2-dual-db-design.md (P2-1).
 
-export { DEFAULT_DATABASE_URL }
-
-export type DbProvider = 'sqlite' | 'postgresql'
-
-export function providerForUrl(url: string): DbProvider {
-  if (url.startsWith('file:')) return 'sqlite'
-  if (url.startsWith('postgres://') || url.startsWith('postgresql://')) return 'postgresql'
-  throw new Error(
-    `Unsupported DATABASE_URL "${url}" — use file: (SQLite) or postgres:// / postgresql:// (Postgres)`,
-  )
-}
+export { DEFAULT_DATABASE_URL, providerForUrl, type DbProvider }
 
 // Rewrites the provider line inside the `datasource db` block only; the
 // generator block also has a `provider` line and must be left alone.
