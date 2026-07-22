@@ -41,6 +41,7 @@ Environment variables live in `.env.local` (git-ignored — you must create it).
 | Key | Example value | Notes |
 | --- | --- | --- |
 | `DATABASE_URL` | `file:./data/clarity.db` | SQLite file path |
+| `DATABASE_POOL_MAX` | _(unset — pg default, 10)_ | Postgres only: max connections in the app's pool. Lower it (e.g. 3–5) on serverless or many-replica deployments so combined replicas stay under the database's connection limit. |
 | `CRM_PASSWORD` | `clarity-dev` | Shared login password |
 | `SESSION_SECRET` | `dev-only-change-before-online` | HMAC key for the session cookie |
 | `TEAM_EMAILS` | `alex@example.com,jordan@example.com` | **Optional** — your team's mailboxes (comma-separated), excluded from lead matching. Defaults to placeholders |
@@ -265,9 +266,31 @@ Released under the [MIT License](LICENSE) — fork it, white-label it, deploy it
 
 When the app goes online:
 
-1. Swap SQLite → Postgres by changing `DATABASE_URL` (Prisma adapter swaps behind the same interface).
+1. Swap SQLite → Postgres by pointing `DATABASE_URL` at a Postgres server **and regenerating the client** — Prisma bakes the provider into the generated client, so the URL alone is not enough:
+
+   ```bash
+   export DATABASE_URL="postgres://user:pass@host:5432/clarity"
+   npm run db:generate   # regenerates the client for the postgresql provider
+   npm run db:push       # applies the schema
+   npm run db:seed       # optional: demo data
+   ```
+
+   Running against the wrong client (e.g. a sqlite-generated client with a postgres URL) fails at boot with Prisma's provider-mismatch error — rerun `npm run db:generate` under the correct `DATABASE_URL`.
 2. Set real `CRM_PASSWORD`, `SESSION_SECRET`, and optionally `ANTHROPIC_API_KEY` as Railway env vars — never commit secrets.
 3. Auth gate in `middleware.ts` stays on in production.
+
+### Scale & production data
+
+**Choosing a database.** SQLite is the small-scale default: one node, one team, modest write concurrency, and the database is a single file — put it on a mounted volume, and backup is copying the file. Postgres is the production/scale choice: concurrent multi-user writes, horizontal app scaling against one shared database, and managed hosting gives you backups, high availability, and point-in-time recovery. If you expect more than one app instance or can't afford to lose data between file copies, use Postgres.
+
+**Connection pooling (Postgres).** The app holds a connection pool sized by `DATABASE_POOL_MAX` (default: pg's 10). Long-lived containers can keep the default; serverless or many-replica deployments should lower it so `replicas × pool size` stays under the database's connection limit.
+
+**Schema changes on a live database.** This project applies schema with `prisma db push` and keeps no migration history (v1 stance — every instance starts empty). Additive changes apply cleanly. Destructive changes (dropping/retyping a column) will make `db push` demand `--accept-data-loss`:
+
+- **Back up before any schema change on a database with real data** (SQLite: copy the file; Postgres: `pg_dump` or your provider's snapshot).
+- **Never script or blindly pass `--accept-data-loss`.** A data-loss prompt is a stop-and-think signal.
+
+**When to adopt real migrations.** The trigger is explicit: **the first production instance holding data you cannot recreate**. At that point, switch from `db push` to `prisma migrate` with a per-provider migration history (`prisma migrate diff` can bootstrap the initial migration from the live schema for each provider). Until then, migration machinery is deliberate YAGNI.
 
 ## Roadmap (deferred)
 

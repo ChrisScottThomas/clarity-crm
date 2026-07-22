@@ -24,7 +24,7 @@ Consequence: **one generated client per provider, selected at build time.**
 
 ## 1. Provider-selection wrapper
 
-`scripts/prisma-provider.mjs` wraps any prisma command (not just `generate` —
+`scripts/prisma-provider.ts` wraps any prisma command (not just `generate` —
 `db push` needs the correct provider too):
 
 1. Read `DATABASE_URL` (default `file:./data/clarity.db`). Map scheme → provider:
@@ -43,8 +43,8 @@ The scheme→provider mapping is one small pure function so it is unit-testable;
 
 `package.json` scripts:
 
-- `db:generate` → `node scripts/prisma-provider.mjs generate`
-- `db:push` → `node scripts/prisma-provider.mjs db push`
+- `db:generate` → `tsx scripts/prisma-provider.ts generate`
+- `db:push` → `tsx scripts/prisma-provider.ts db push`
 
 ## 2. Runtime adapter selection — `lib/db.ts`
 
