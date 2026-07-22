@@ -1,5 +1,8 @@
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { DEFAULT_DATABASE_URL, providerForUrl, rewriteProvider } from '../scripts/prisma-provider'
+import { DEFAULT_DATABASE_URL, providerForUrl, rewriteProvider, withProvider } from '../scripts/prisma-provider'
 
 describe('providerForUrl', () => {
   it('maps file: URLs to sqlite', () => {
@@ -12,7 +15,7 @@ describe('providerForUrl', () => {
   })
 
   it('rejects unknown schemes, naming the accepted ones', () => {
-    expect(() => providerForUrl('mysql://localhost/db')).toThrow(/file:.*postgres/s)
+    expect(() => providerForUrl('mysql://localhost/db')).toThrow(/file:.*postgres/)
   })
 
   it('defaults to the sqlite dev database', () => {
@@ -44,5 +47,41 @@ datasource db {
 
   it('throws if the datasource block cannot be found', () => {
     expect(() => rewriteProvider('generator client {}', 'sqlite')).toThrow(/datasource/)
+  })
+})
+
+describe('withProvider', () => {
+  const schema = `datasource db {\n  provider = "sqlite"\n}\n`
+
+  function tempSchema(): string {
+    const dir = mkdtempSync(join(tmpdir(), 'prisma-provider-'))
+    const path = join(dir, 'schema.prisma')
+    writeFileSync(path, schema)
+    return path
+  }
+
+  it('runs the callback with the rewritten schema in place', () => {
+    const path = tempSchema()
+    let seen = ''
+    withProvider(path, 'postgresql', () => {
+      seen = readFileSync(path, 'utf8')
+    })
+    expect(seen).toContain('provider = "postgresql"')
+  })
+
+  it('restores the original schema after success', () => {
+    const path = tempSchema()
+    withProvider(path, 'postgresql', () => {})
+    expect(readFileSync(path, 'utf8')).toBe(schema)
+  })
+
+  it('restores the original schema when the callback throws', () => {
+    const path = tempSchema()
+    expect(() =>
+      withProvider(path, 'postgresql', () => {
+        throw new Error('prisma exploded')
+      }),
+    ).toThrow('prisma exploded')
+    expect(readFileSync(path, 'utf8')).toBe(schema)
   })
 })
