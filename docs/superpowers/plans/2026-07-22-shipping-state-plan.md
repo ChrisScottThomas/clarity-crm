@@ -9,7 +9,7 @@
 |---|----------|--------|-------------|
 | D1 | White-label scope | **Generalize the domain** | Proprietary vocab becomes configurable/optional, not baked in |
 | D2 | Config mechanism | **Deploy-time config file** (`clarity.config.ts`) | Keeps `as const` union types; no runtime settings UI; no data-migration hazard. Runtime editing = possible phase 2. |
-| D3 | DB + deploy | **Support both SQLite + Postgres** | Two adapters, provider-agnostic schema, CI matrix. Prisma dual-provider is the main risk — spike first. |
+| D3 | DB + deploy | **Support both SQLite + Postgres** | Provider-agnostic schema (portable, confirmed), CI matrix. Spike done (2026-07-22): dual-provider is feasible but needs **one generated client per provider** (build-time selection), not a runtime adapter swap — see Phase 2. |
 | D4 | Auth model | **Harden shared-password** | Fail-closed secrets, real session tokens w/ expiry, login throttle. No per-user accounts (owners stay labels). |
 
 ## Current-state facts (grounding)
@@ -46,17 +46,26 @@ Make the change easy (extract config) before making the easy change. Structural 
 
 **Exit:** a fork can change vocab/branding and toggle diagnostics by editing one file; default config is behavior-identical; tests green.
 
-## Phase 2 — Persistence: support both SQLite + Postgres (D3; spike first)
+## Phase 2 — Persistence: support both SQLite + Postgres (D3)
 
-⚠️ **Risk:** Prisma dual-provider is awkward (provider is compile-time; migrations are provider-specific). **Spike before committing the phase.**
+✅ **Spike done (2026-07-22) — GO, but the original approach was wrong.** Verified empirically on Prisma 7.8 against a real `postgres:16` container (throwaway branch, discarded). Findings:
 
-1. **Spike:** confirm the Prisma 7 dual-provider approach — env-selected provider + driver adapter (`@prisma/adapter-better-sqlite3` vs `@prisma/adapter-pg`). Schema is already provider-agnostic (no native enums; `attendees` stored as JSON string) — verify nothing else blocks Postgres.
-2. **`lib/db.ts`** selects the adapter from the `DATABASE_URL` scheme (`file:` → SQLite, `postgres://` → pg).
-3. **Migrations:** convert `db push` → `prisma migrate` with committed migration history (document per-provider generate/migrate steps).
+- ✅ The **schema is fully portable** — `db push` to Postgres succeeds with **zero schema changes** (no native enums; `attendees` is a JSON string; all scalars map cleanly).
+- ✅ A client **generated for `postgresql`**, driven via `@prisma/adapter-pg`, passes every representative op (cuid defaults, relations + `include`, `DateTime` round-trip, `Float`/`Int`/`Boolean`, JSON-string field, `@unique`, `@updatedAt`, nested-relation `count`).
+- ❌ **A single client cannot serve both DBs.** Prisma binds the provider into the *generated client* and enforces it at construction: pairing the sqlite-generated client with the pg adapter throws *"Driver Adapter `@prisma/adapter-pg` … is not compatible with the provider `sqlite` specified in the Prisma schema."* → the runtime adapter-swap in the old step 2 is **impossible**.
+- ❌ **`provider` cannot be `env()`-selected** — `prisma validate` rejects it (`P1012`: "A datasource must not use the env() function in the provider argument"). So one schema file can't switch providers by env var alone.
+
+**Revised approach — one generated client per provider, selected at build time:**
+
+1. **Provider selection (key open decision):** because `provider` is a literal fixed at generate time, pick one of:
+   - **(a) Two schema files** (`schema.sqlite.prisma` / `schema.postgres.prisma`) sharing the models — simple, but duplicates the model block.
+   - **(b) One canonical schema + a build step** that rewrites the `provider` line from `DATABASE_URL`'s scheme before `prisma generate` — no duplication, adds a small codegen wrapper. *(Recommended; decide during Phase 2 design.)*
+2. **`lib/db.ts`** picks the driver adapter from the `DATABASE_URL` scheme (`file:` → `@prisma/adapter-better-sqlite3`, `postgres://` → `@prisma/adapter-pg`). This part still holds — but it only works once the client was generated for the matching provider (step 1).
+3. **Migrations are provider-specific** (`prisma migrate` emits different SQL per DB). Either keep committed history **per provider** (two `migrations/` dirs) or stay on `db push`. Document the per-provider generate/migrate steps.
 4. **Fix README:259** false Postgres claim with the real steps.
-5. **CI matrix:** run the suite against both providers.
+5. **CI matrix:** run the suite against both providers (generate the right client per matrix leg).
 
-**Exit:** a deployer picks SQLite or Postgres via `DATABASE_URL`; migrations reproducible; both pass CI.
+**Exit:** a deployer picks SQLite or Postgres via `DATABASE_URL` (+ the provider-selection step from #1); migrations reproducible; both pass CI.
 
 ## Phase 3 — Deploy & distribution
 
