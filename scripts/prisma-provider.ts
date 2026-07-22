@@ -1,6 +1,7 @@
 import { spawnSync } from 'node:child_process'
 import { readFileSync, writeFileSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
+import { DEFAULT_DATABASE_URL } from '../lib/db-adapter'
 
 // Prisma bakes the datasource `provider` into the generated client, and
 // `provider = env(...)` is invalid (P1012) — so dual-provider support means
@@ -8,7 +9,7 @@ import { pathToFileURL } from 'node:url'
 // prisma command, then restoring it. See
 // docs/superpowers/specs/2026-07-22-phase-2-dual-db-design.md (P2-1).
 
-export const DEFAULT_DATABASE_URL = 'file:./data/clarity.db'
+export { DEFAULT_DATABASE_URL }
 
 export type DbProvider = 'sqlite' | 'postgresql'
 
