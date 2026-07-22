@@ -1,13 +1,21 @@
 'use client'
 import { useState, useEffect } from 'react'
-import { OWNERS, TRACKS, SOURCES, NEXT_ACTIONS, RELATIONSHIPS, CONSTRAINTS, BUSINESS_DEBTS, ROADMAP_STAGES } from '../lib/constants'
+import { OWNERS, TRACKS, SOURCES, NEXT_ACTIONS, RELATIONSHIPS, CONSTRAINTS, BUSINESS_DEBTS, ROADMAP_STAGES, DIAGNOSTICS_ENABLED } from '../lib/constants'
 
-const text = ['name','companyName','email','linkedinUrl','website','graduationCriterion']
-const selects: [string, readonly string[]][] = [
+// Diagnostic fields (the proprietary constraints/debt/roadmap framework) only
+// appear when diagnostics are enabled in clarity.config.ts.
+const coreText = ['name','companyName','email','linkedinUrl','website']
+const diagnosticText = ['graduationCriterion']
+const text = DIAGNOSTICS_ENABLED ? [...coreText, ...diagnosticText] : coreText
+
+const coreSelects: [string, readonly string[]][] = [
   ['owner', OWNERS], ['track', TRACKS], ['source', SOURCES], ['nextAction', NEXT_ACTIONS],
-  ['relationship', RELATIONSHIPS], ['primaryConstraint', CONSTRAINTS],
-  ['businessDebt', BUSINESS_DEBTS], ['scalingRoadmapStage', ROADMAP_STAGES],
+  ['relationship', RELATIONSHIPS],
 ]
+const diagnosticSelects: [string, readonly string[]][] = [
+  ['primaryConstraint', CONSTRAINTS], ['businessDebt', BUSINESS_DEBTS], ['scalingRoadmapStage', ROADMAP_STAGES],
+]
+const selects: [string, readonly string[]][] = DIAGNOSTICS_ENABLED ? [...coreSelects, ...diagnosticSelects] : coreSelects
 const OMIT_ON_EDIT = ['id', 'contactAdded', 'dateContacted', 'callDate', 'followUpDate', 'closedDate', 'company', 'openLoops']
 export default function LeadForm({ lead, mode }: { lead?: any; mode: 'create' | 'edit' }) {
   const [form, setForm] = useState<any>(lead ?? { relationship: 'contact' })
