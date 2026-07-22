@@ -30,11 +30,11 @@ Full reader-facing docs live in [`docs/`](docs/README.md), organised by the Diat
 ```bash
 npm install
 npm run db:push      # creates the SQLite DB at data/clarity.db and applies the schema
-npx prisma generate  # generates the Prisma client (required after every schema change)
+npm run db:generate  # generates the Prisma client (required after every schema change)
 npm run db:seed      # seeds booking-link settings only — NO leads
 ```
 
-> **After every `git pull` or schema change**, re-run `npx prisma generate`. The generated client at `app/generated/prisma/` is gitignored and not included in the repo. Skipping this step causes runtime errors like `Cannot read properties of undefined (reading 'findMany')` on any page that queries the database.
+> **After every `git pull` or schema change**, re-run `npm run db:generate`. The generated client at `app/generated/prisma/` is gitignored and not included in the repo. Skipping this step causes runtime errors like `Cannot read properties of undefined (reading 'findMany')` on any page that queries the database.
 
 Environment variables live in `.env.local` (git-ignored — you must create it).
 
@@ -307,5 +307,5 @@ When the app goes online:
 ## Known notes
 
 - **Next 16 deprecation warning.** `middleware.ts` prints a `middleware` → `proxy` notice at build time. It is harmless.
-- **Prisma client is git-ignored.** `app/generated/prisma` must be regenerated with `npx prisma generate` after every fresh clone or schema change. `npm run db:push` applies schema migrations but does NOT regenerate the client — run both.
+- **Prisma client is git-ignored.** `app/generated/prisma` must be regenerated with `npm run db:generate` after every fresh clone or schema change. `npm run db:push` applies schema migrations but does NOT regenerate the client — run both.
 - **Workflow rules are UI-only.** The Workflows page stores rules in the database but does not execute them — the execution engine is deferred.
