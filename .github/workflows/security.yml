@@ -21,9 +21,10 @@ jobs:
         with:
           fetch-depth: 0 # full history so a secret in any commit is caught
 
-      # Run the gitleaks binary directly rather than the Action: the Action
-      # requires a paid GITLEAKS_LICENSE for private/org repos, and this repo is
-      # private. The CLI has no such requirement.
+      # Run the gitleaks binary directly (pinned version) rather than the
+      # gitleaks Action: no external Action dependency, and no GITLEAKS_LICENSE
+      # needed on either public or private repos. Swap to gitleaks/gitleaks-action
+      # later if SARIF upload / PR annotations become worthwhile.
       - name: Run gitleaks
         run: |
           set -euo pipefail
