@@ -81,7 +81,7 @@ tests remain deferred (task I1 in the testing-and-CI plan).
 ## 4. Docs & deployer flow
 
 - Fix the README's false "Postgres is just a `DATABASE_URL` swap" claim
-  (README:259) with the real flow:
+  (README:268) with the real flow:
   `set DATABASE_URL` → `npm run db:generate` → `npm run db:push` → `npm run db:seed`.
 - State the migration stance explicitly: `db push` for both providers, no
   migration history in v1; revisit when a deployed instance has data to protect.
