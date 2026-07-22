@@ -85,6 +85,15 @@ Test coverage:
 - **schema extensions** — Meeting, TimeEntry, Conversation, WorkflowRule models verified
 - **AI score module** — `scoreLead` function exported with correct shape
 
+## Continuous integration
+
+Every PR (and every push to `main`) runs two workflows:
+
+- **CI** ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) — **blocking:** `prisma generate` → `tsc --noEmit` → `vitest run` → `next build`. **Report-only:** ESLint and the docs-updated check, which annotate but exit 0 so a red check always means a real failure.
+- **Security** ([`.github/workflows/security.yml`](.github/workflows/security.yml)) — **blocking:** gitleaks secret scan and the white-label integrity guard ([`scripts/check-white-label.mjs`](scripts/check-white-label.mjs)).
+
+**Docs are updated with every PR.** The report-only docs check ([`scripts/check-docs-updated.mjs`](scripts/check-docs-updated.mjs)) posts a warning when product code changes but no `docs/**` or markdown file does — a prompt to update the docs or note in the PR why none is needed. The [pull request template](.github/PULL_REQUEST_TEMPLATE.md) carries the same checklist. Both report-only checks are wired to flip to blocking later (lint once its debt clears; docs via `DOCS_CHECK_STRICT=1`).
+
 ## Screens
 
 ### Main
