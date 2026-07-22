@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { buildNewLead } from '../lib/leads'
 import { applyStageChange, setRelationshipManually } from '../lib/leads'
+import { STAGES } from '../lib/constants'
 
 describe('buildNewLead', () => {
   it('defaults relationship to contact when unspecified', () => {
@@ -15,8 +16,8 @@ describe('buildNewLead', () => {
     const lead = buildNewLead({ name: 'Y', relationship: 'prospect' })
     expect(lead.relationship).toBe('prospect')
   })
-  it('defaults stage to New Lead', () => {
-    expect(buildNewLead({ name: 'Z' }).stage).toBe('New Lead')
+  it('defaults stage to the first configured stage', () => {
+    expect(buildNewLead({ name: 'Z' }).stage).toBe(STAGES[0])
   })
 })
 

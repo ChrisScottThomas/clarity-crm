@@ -18,7 +18,8 @@ export function buildNewLead(input: NewLeadInput): NewLead {
   const requested = input.relationship
   const relationship: Relationship =
     requested && requested !== 'client' ? requested : DEFAULT_RELATIONSHIP
-  return { ...input, relationship, stage: input.stage ?? 'New Lead' }
+  // First configured stage is the entry point — keeps a renamed pipeline working.
+  return { ...input, relationship, stage: input.stage ?? STAGES[0] }
 }
 
 export function applyStageChange<T extends { stage: Stage; relationship?: Relationship; closedDate?: Date | null; stageChangedAt?: Date }>(

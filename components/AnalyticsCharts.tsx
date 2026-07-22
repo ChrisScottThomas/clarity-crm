@@ -8,14 +8,16 @@ export default function AnalyticsCharts({ data }: { data: any }) {
       <section><h2>By stage</h2>{Object.entries(data.byStage).map(([s, n]: any) => <div key={s}>{s}: {n}</div>)}</section>
       <section><h2>By owner</h2>{Object.entries(data.byOwner).map(([o, n]: any) => <div key={o}>{o}: {n}</div>)}</section>
       <section><h2>By source</h2>{Object.entries(data.bySource).map(([s, n]: any) => <div key={s}>{s}: {n}</div>)}</section>
-      <section><h2>By primary constraint (6 Ms)</h2>
-        {Object.entries(data.byConstraint).map(([c, n]: any) => (
-          <div key={c} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span style={{ width: 12, height: 12, background: CONSTRAINT_COLORS[c as Constraint], display: 'inline-block', borderRadius: 2 }} />
-            {c}: {n}
-          </div>
-        ))}
-      </section>
+      {data.byConstraint && (
+        <section><h2>By primary constraint (6 Ms)</h2>
+          {Object.entries(data.byConstraint).map(([c, n]: any) => (
+            <div key={c} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ width: 12, height: 12, background: CONSTRAINT_COLORS[c as Constraint], display: 'inline-block', borderRadius: 2 }} />
+              {c}: {n}
+            </div>
+          ))}
+        </section>
+      )}
     </div>
   )
 }
