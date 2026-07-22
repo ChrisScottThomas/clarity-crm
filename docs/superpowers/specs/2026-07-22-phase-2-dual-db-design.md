@@ -66,7 +66,7 @@ The `verify` job in `.github/workflows/ci.yml` gains
 - Each leg sets its own `DATABASE_URL` and runs
   `npm run db:generate` (replacing the bare `npx prisma generate`) →
   `tsc --noEmit` → `vitest run` → **`db:push` + smoke** → `next build`.
-- The smoke step is `scripts/db-smoke.mjs`: create/read/delete one `Company`
+- The smoke step is `scripts/db-smoke.ts`: create/read/delete one `Company`
   row through the real generated client. It runs on **both** legs — uniform
   matrix, and it keeps the spike's portability finding continuously proven.
 - The postgres leg adds a `postgres:16` service container with health checks.
