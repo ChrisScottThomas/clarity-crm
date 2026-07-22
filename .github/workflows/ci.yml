@@ -13,8 +13,33 @@ concurrency:
 
 jobs:
   verify:
-    name: Typecheck · Test · Build
+    name: Typecheck · Test · Build (${{ matrix.provider }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - provider: sqlite
+            database-url: file:./data/ci.db
+          - provider: postgres
+            database-url: postgres://postgres:ci@localhost:5432/clarity
+    env:
+      DATABASE_URL: ${{ matrix.database-url }}
+    # The service container runs on both legs (GitHub Actions cannot make
+    # services conditional per matrix entry); the sqlite leg simply ignores it.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: clarity
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v5
 
@@ -26,10 +51,10 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # The Prisma client generates into a gitignored dir; tsc and the build
-      # both need it present first.
-      - name: Generate Prisma client
-        run: npx prisma generate
+      # One generated client per provider (spike finding): the wrapper reads
+      # DATABASE_URL, rewrites the schema's provider line, generates, restores.
+      - name: Generate Prisma client (${{ matrix.provider }})
+        run: npm run db:generate
 
       - name: Typecheck
         run: npx tsc --noEmit
@@ -40,6 +65,15 @@ jobs:
       - name: Unit + integration tests
         run: npx vitest run
 
+      # Apply the schema to a real database and prove CRUD through the
+      # generated client — keeps the spike's portability finding continuously
+      # verified on both providers.
+      - name: Apply schema (db push)
+        run: mkdir -p data && npm run db:push
+
+      - name: DB smoke (create/read/delete)
+        run: npm run db:smoke
+
       # Smoke: the whole app must compile and build. Dummy secrets satisfy the
       # fail-closed boot checks; they are not real and grant no access.
       - name: Build (smoke)
@@ -47,7 +81,6 @@ jobs:
         env:
           SESSION_SECRET: ci-not-a-real-secret
           CRM_PASSWORD: ci-not-a-real-password
-          DATABASE_URL: file:./data/ci.db
 
   lint:
     name: Lint (report-only)
@@ -59,7 +92,7 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npx prisma generate
+      - run: npm run db:generate # sqlite default; lint needs the client present, any provider will do
       # Report-only for now: main still carries pre-existing no-explicit-any
       # debt (task L1 in the testing-and-CI plan). The step surfaces issues as a
       # warning annotation but exits 0 on purpose — a RED check must always mean
