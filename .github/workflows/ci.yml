@@ -67,3 +67,26 @@ jobs:
       # debt is cleared, to make lint gate.
       - name: ESLint (report-only)
         run: npx eslint . || echo "::warning title=ESLint (report-only)::lint found issues — non-blocking; tracked as task L1 in docs/superpowers/plans/2026-07-22-testing-and-ci-plan.md"
+
+  docs-check:
+    name: Docs updated (report-only)
+    # Only meaningful on PRs, where there is a base branch to diff against.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0 # need the base branch present to diff against it
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      # Standing rule: docs are updated with every PR. Report-only for now — the
+      # step emits a ::warning:: annotation when product code moved without any
+      # docs change, but exits 0 on purpose so a RED check always means a real,
+      # blocking failure. The PR template carries the human checklist. Flip to
+      # gating by setting DOCS_CHECK_STRICT=1 (and dropping the `|| true`) once
+      # the convention has bedded in.
+      - name: Check docs were updated
+        env:
+          DOCS_CHECK_BASE: origin/${{ github.base_ref }}
+        run: node scripts/check-docs-updated.mjs || true
