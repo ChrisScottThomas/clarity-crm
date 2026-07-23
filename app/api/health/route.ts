@@ -21,6 +21,10 @@ type HealthResult = { body: { status: 'ok' | 'error' }; status: number }
 // the check lie by more than 5s.
 const CACHE_TTL_MS = 5000
 let cached: { result: HealthResult; expiresAt: number } | null = null
+// Requests arriving while a check is already running share it rather than each
+// starting their own — without this, a burst on a cold cache still issues one
+// query per concurrent request, which is the case the cache exists to prevent.
+let inFlight: Promise<HealthResult> | null = null
 
 async function checkHealth(): Promise<HealthResult> {
   try {
@@ -34,7 +38,10 @@ async function checkHealth(): Promise<HealthResult> {
 export async function GET() {
   const now = Date.now()
   if (!cached || cached.expiresAt <= now) {
-    cached = { result: await checkHealth(), expiresAt: now + CACHE_TTL_MS }
+    inFlight ??= checkHealth().finally(() => {
+      inFlight = null
+    })
+    cached = { result: await inFlight, expiresAt: Date.now() + CACHE_TTL_MS }
   }
   return NextResponse.json(cached.result.body, { status: cached.result.status })
 }
@@ -44,4 +51,5 @@ export async function GET() {
 // previous test's cached result.
 export function __resetHealthCacheForTests() {
   cached = null
+  inFlight = null
 }

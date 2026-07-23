@@ -87,3 +87,16 @@ describe('health API', () => {
     })
   })
 })
+
+describe('health API — concurrency', () => {
+  // A burst arriving on a cold cache must share one query, not start one each.
+  // Without in-flight dedup the memoization does nothing for exactly the case
+  // it exists to handle.
+  it('collapses concurrent requests on a cold cache into a single query', async () => {
+    queryRaw.mockResolvedValue([{ 1: 1 }])
+    const { GET } = await import('../app/api/health/route')
+    const results = await Promise.all([GET(), GET(), GET(), GET()])
+    expect(queryRaw).toHaveBeenCalledTimes(1)
+    for (const res of results) expect(res.status).toBe(200)
+  })
+})

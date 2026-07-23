@@ -508,9 +508,11 @@ describe('Dockerfile', () => {
 
   // next build instantiates PrismaClient during page-data collection, so
   // DATABASE_URL must be present for BOTH commands — spike R1/R6.
+  // Anchored to ^RUN deliberately: an unanchored match picks up the comment
+  // line above the build stage, which mentions `next build` in prose.
   it('supplies DATABASE_URL to both db:generate and next build', () => {
-    const generate = dockerfile.match(/^.*db:generate.*$/m)?.[0] ?? ''
-    const build = dockerfile.match(/^.*next build.*$/m)?.[0] ?? ''
+    const generate = dockerfile.match(/^RUN .*db:generate.*$/m)?.[0] ?? ''
+    const build = dockerfile.match(/^RUN .*next build.*$/m)?.[0] ?? ''
     expect(generate).toContain('DATABASE_URL')
     expect(build).toContain('DATABASE_URL')
   })
@@ -679,8 +681,11 @@ Expected: both build; each around **549 MB** (the spike's measured variant D).
 Confirm the CLI matches the baked client, per the spike's variant-C failure:
 
 ```bash
-docker run --rm clarity-crm:sqlite sh -c 'node -p "require(\"/app/node_modules/prisma/package.json\").version"; node -p "require(\"/app/node_modules/@prisma/client/package.json\").version"'
+docker run --rm --entrypoint sh clarity-crm:sqlite -c 'node -p "require(\"/app/node_modules/prisma/package.json\").version"; node -p "require(\"/app/node_modules/@prisma/client/package.json\").version"'
 ```
+
+`--entrypoint sh` is required: with `ENTRYPOINT` set, a trailing `sh -c …` is
+passed as *arguments to the entrypoint* rather than run as a shell.
 
 Expected: two identical version strings.
 
