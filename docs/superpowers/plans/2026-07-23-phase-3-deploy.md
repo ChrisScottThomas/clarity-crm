@@ -4,7 +4,9 @@
 
 **Goal:** A clean fork of this repo yields a running, persistent Clarity CRM instance from a single `docker compose up`, on either SQLite or Postgres, proven by CI.
 
-**Architecture:** One universal container image. `next build` produces a standalone server; a full production `node_modules` is layered on top so the Prisma CLI is present at runtime. The entrypoint reads `DATABASE_URL`, regenerates the provider-specific Prisma client, applies the schema with `db push`, then execs the server — making provider mismatch structurally impossible. Two self-contained compose files (SQLite default, Postgres variant) and a new `/api/health` route that CI polls to prove the container really booted.
+**Architecture:** One container image *per provider*, selected by a `DB_PROVIDER` build arg. `next build` produces a standalone server with the Prisma client baked in (the spike proved this is unavoidable). The entrypoint verifies the runtime `DATABASE_URL` matches the baked provider — refusing to boot on a mismatch — then applies the schema with `db push` and execs the server. Two self-contained compose files (SQLite default, Postgres variant), each declaring its own build arg, and a new `/api/health` route that CI polls to prove the container really booted.
+
+> **Revised 2026-07-23.** The original plan assumed one universal image regenerating the client at boot. [The spike refuted it](../spikes/2026-07-23-phase-3-docker-spike.md): Next inlines the generated client into `.next/server/chunks` at build time, and Prisma 7 emits TypeScript. Tasks 1, 2, 6, 7, 8, 9 and 11 were rewritten against the [revised spec](../specs/2026-07-23-phase-3-deploy-design.md).
 
 **Tech Stack:** Docker (multi-stage, `node:22-slim`), Docker Compose, Next.js 16 standalone output, Prisma 7 (`better-sqlite3` / `pg` driver adapters), Vitest, GitHub Actions.
 
@@ -14,34 +16,42 @@
 
 ## Ground rules for this plan
 
-**Tasks 1–2 are a spike gate.** The spec's risk table (R1–R5) records five
-*unproven theories*. Nothing in Phase B may be written until Task 1 has produced
-observed output for each and Task 2 has updated the spec with the findings. If a
-spike refutes a theory, stop and revise the spec before continuing — do not
-patch around it.
+**Phase A is a spike gate, and it has already fired once.** Tasks 1–2 are
+complete: R1 and R5 were refuted, the spec was revised, and this plan rewritten.
+**Task 2b is a second gate** covering the two risks the revision introduced
+(R6, R7). Nothing in Phase B past Task 5 may be written until R6 and R7 read
+Confirmed. If a spike refutes a theory, stop and revise the spec — do not patch
+around it.
 
 **Spike code is throwaway.** It lives in the scratchpad, never in the repo. Only
 the *findings* are committed.
 
-**Measured numbers are real numbers.** R4 (boot regeneration time) and R5 (image
-size) produce values that go into the compose healthcheck `start_period` and the
-deploy docs. Never substitute a plausible-looking figure.
+**Measured numbers are real numbers.** R4 settled the healthcheck `start_period`
+at **30s** (measured worst case 2.4 s to a DB-backed 200). R7 will settle the
+image size that goes into the deploy docs. Never substitute a plausible-looking
+figure for one you can measure.
+
+**Task 3 also lands `.dockerignore`.** Spike A measured a 751.70 MB build context
+carrying a macOS-native `node_modules` that `COPY . .` layers over the Linux one.
+It did not break that build, but it is a trap for the first build step that
+touches a native addon — so it lands before the Dockerfile, not with it.
 
 ## File structure
 
 | File | Responsibility | Task |
 |------|---------------|------|
-| `docs/superpowers/spikes/2026-07-23-phase-3-docker-spike.md` | Recorded spike findings (evidence for R1–R5) | 1 |
-| `docs/superpowers/specs/2026-07-23-phase-3-deploy-design.md` | Spec — risk table updated with outcomes | 2, 13 |
+| `docs/superpowers/spikes/2026-07-23-phase-3-docker-spike.md` | Spike A findings (R1–R5) — **done** | 1 |
+| `docs/superpowers/spikes/2026-07-23-phase-3-runner-spike.md` | Spike B findings (R6, R7) | 2b |
+| `docs/superpowers/specs/2026-07-23-phase-3-deploy-design.md` | Spec — risk table updated with outcomes | 2, 2b, 13 |
 | `package.json` | `tsx` moves to `dependencies` (runtime dep of the container) | 3 |
 | `next.config.ts` | `output: 'standalone'` + `serverExternalPackages` | 3 |
+| `.dockerignore` | Build context hygiene — lands early, per spike finding 4 | 3 |
 | `app/api/health/route.ts` | Liveness + DB round-trip; returns `{"status":"ok"}` only | 4 |
 | `proxy.ts` | Allowlist `/api/health` past the auth gate | 4 |
 | `lib/env.ts` | `assertDatabaseUrl()` — boot-time `DATABASE_URL` scheme check | 5 |
 | `instrumentation.ts` | Wire the new check into boot | 5 |
-| `Dockerfile` | Three-stage build; standalone + layered prod `node_modules` | 6 |
-| `.dockerignore` | Keep build context small and secret-free | 6 |
-| `docker-entrypoint.sh` | Validate → generate → push → exec server | 7 |
+| `Dockerfile` | Three-stage build; `DB_PROVIDER` build arg; slimmed runner + `openssl` | 6 |
+| `docker-entrypoint.sh` | Verify provider match → push → exec server | 7 |
 | `docker-compose.yml` | SQLite deployment (named volume) | 8 |
 | `docker-compose.postgres.yml` | Postgres deployment (app + `postgres:16`) | 8 |
 | `.github/workflows/ci.yml` | New `Docker · boot smoke` job | 9 |
@@ -54,207 +64,109 @@ Tests live in `tests/*.test.ts` (flat, matching the existing suite).
 
 # Phase A — Spike gate
 
-### Task 1: Prove R1–R5 with a throwaway container
+### Task 1: Prove R1–R5 with a throwaway container — ✅ COMPLETE
+
+Executed 2026-07-23. Findings: [`../spikes/2026-07-23-phase-3-docker-spike.md`](../spikes/2026-07-23-phase-3-docker-spike.md) (commit `a6a0f4f`).
+
+- [x] R1 **Refuted** — Next inlines the generated client (schema text included) into `.next/server/chunks/*.js`; Prisma 7's generator emits TypeScript. A SQLite-built image against Postgres served `/login` 200 and 500'd every query.
+- [x] R2 **Confirmed** — writes succeeded through both drivers; the traced standalone tree already carries `better_sqlite3.node`, `pg`, `@prisma/client`.
+- [x] R3 **Confirmed** — no `node-gyp`/`gyp info`/`make: Entering` in the build log.
+- [x] R4 **Confirmed** — 1.5–2.4 s to a DB-backed 200.
+- [x] R5 **Refuted as specified** — 1.25 GB image, 927 MB of it the unnecessary layered `node_modules`.
+
+### Task 2: Update the spec with spike findings — ✅ COMPLETE
+
+Executed 2026-07-23 (commit `8c24390`). P3-1 inverted to a build arg, P3-6 added
+(fail loudly on mismatch), runner slimmed, R6/R7 opened. This plan was rewritten
+against the revised spec.
+
+---
+
+### Task 2b: Prove R6 and R7 — GATE
 
 **Files:**
-- Create: `docs/superpowers/spikes/2026-07-23-phase-3-docker-spike.md`
-- Scratch (never committed): `$SCRATCH/Dockerfile.spike`, `$SCRATCH/entrypoint.spike.sh`
+- Create: `docs/superpowers/spikes/2026-07-23-phase-3-runner-spike.md`
+- Scratch (never committed): `$SCRATCH/Dockerfile.spike2`
 
-Set `SCRATCH` to this session's scratchpad directory before starting.
-
-**What is being proven** (from the spec's risk table):
+The revision introduced two unproven theories. Both must be settled before the
+Dockerfile is written.
 
 | # | Theory | Evidence that settles it |
 |---|--------|--------------------------|
-| R1 | Next standalone resolves a Prisma client regenerated *after* build | A real query succeeds in the running container |
-| R2 | Native modules survive the standalone trace | A SQLite query *and* a Postgres query both succeed |
-| R3 | `node:22-slim` uses `better-sqlite3` prebuilt binaries | No compile-from-source in the build log |
-| R4 | Boot regeneration is fast enough for a healthcheck | Measured seconds from container start to first 200 |
-| R5 | Layered `node_modules` image size is acceptable | Measured MB from `docker images` |
+| R6 | `next build` succeeds with an **unreachable** dummy Postgres URL | A completed build using a URL pointing at nothing |
+| R7 | A slimmed runner can still run `db push`, at an acceptable size | `db push` succeeding in the slimmed image, plus a measured size |
 
-- [ ] **Step 1: Write the spike Dockerfile**
+R6 matters because a *reachable* URL means baking real credentials into image
+history. Spike A used a reachable one, so this is genuinely open.
 
-Create `$SCRATCH/Dockerfile.spike`:
+- [ ] **Step 1: Settle R6 — build with a dummy unreachable Postgres URL**
 
-```dockerfile
-# THROWAWAY — spike only. Proves R1-R5. Not the production Dockerfile.
-FROM node:22-slim AS deps
-WORKDIR /app
-COPY package.json package-lock.json ./
-RUN npm ci
-
-FROM node:22-slim AS builder
-WORKDIR /app
-COPY --from=deps /app/node_modules ./node_modules
-COPY . .
-RUN npm run db:generate
-RUN npx next build
-
-FROM node:22-slim AS runner
-WORKDIR /app
-ENV NODE_ENV=production
-COPY --from=builder /app/.next/standalone ./
-COPY --from=builder /app/.next/static ./.next/static
-COPY --from=builder /app/public ./public
-# The layered full production node_modules — this is the R2/R5 question.
-COPY --from=deps /app/node_modules ./node_modules
-COPY --from=builder /app/prisma ./prisma
-COPY --from=builder /app/prisma.config.ts ./prisma.config.ts
-COPY --from=builder /app/scripts ./scripts
-COPY --from=builder /app/lib ./lib
-COPY --from=builder /app/package.json ./package.json
-COPY entrypoint.spike.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh && mkdir -p /app/data
-EXPOSE 3000
-ENTRYPOINT ["/entrypoint.sh"]
-```
-
-- [ ] **Step 2: Write the spike entrypoint**
-
-Create `$SCRATCH/entrypoint.spike.sh`:
-
-```sh
-#!/bin/sh
-set -e
-echo "spike: DATABASE_URL=${DATABASE_URL}"
-START=$(date +%s)
-npx tsx scripts/prisma-provider.ts generate
-npx tsx scripts/prisma-provider.ts db push
-END=$(date +%s)
-echo "spike: R4 regeneration+push took $((END-START))s"
-exec node server.js
-```
-
-- [ ] **Step 3: Build the spike image and capture the log**
+Temporarily add `output: 'standalone'` to `next.config.ts` (uncommitted; revert after).
 
 ```bash
 cd /Users/chris.scott-thomas/github/clarity-crm/.claude/worktrees/session-c77cb5
-cp "$SCRATCH/Dockerfile.spike" "$SCRATCH/entrypoint.spike.sh" .
-docker build -f Dockerfile.spike -t clarity-spike . 2>&1 | tee "$SCRATCH/spike-build.log"
-rm -f Dockerfile.spike entrypoint.spike.sh
+DATABASE_URL="postgres://build:build@127.0.0.1:1/build" npm run db:generate
+DATABASE_URL="postgres://build:build@127.0.0.1:1/build" npx next build 2>&1 | tee "$SCRATCH/r6-build.log"
+echo "exit: $?"
 ```
 
-Expected: build succeeds. **Do not proceed on a failed build — record the failure
-as the R1/R2/R3 finding and stop.**
+Port 1 is guaranteed closed. Expected if R6 holds: build completes. If it fails,
+capture the verbatim error — the fallback is standing up a throwaway Postgres in
+the builder stage, which is a real complication and must be recorded as such.
 
-- [ ] **Step 4: Settle R3 — check for compile-from-source**
+- [ ] **Step 2: Measure the prod-only dependency tree (R7, candidate 1)**
 
 ```bash
-grep -iE "node-gyp|prebuild-install|gyp info|make: Entering" "$SCRATCH/spike-build.log" || echo "R3: no compile-from-source markers found"
+docker run --rm -v "$PWD":/src -w /tmp node:22-slim sh -c \
+  "cp /src/package.json /src/package-lock.json . && npm ci --omit=dev >/dev/null 2>&1 && du -sh node_modules && ls node_modules/.bin | grep -E '^(prisma|tsx)$'"
 ```
 
-Expected: no `node-gyp` build markers for `better-sqlite3`. Record the literal
-output either way.
+Records the prod-only tree size and confirms whether `prisma` and `tsx` binaries
+are present. Note: this only works once Task 3 has moved `tsx` into
+`dependencies` — if `tsx` is missing here, that is expected and confirms the
+dependency move is load-bearing rather than cosmetic.
 
-- [ ] **Step 5: Settle R5 — measure image size**
+- [ ] **Step 3: Settle R7 — build a slimmed runner and run `db push` in it**
+
+Write `$SCRATCH/Dockerfile.spike2` using the winning candidate from Step 2:
+standalone bundle + the prod-only tooling, `openssl` installed, non-root user.
+Build it, start a `postgres:16` alongside, and run `db push` inside the container
+against the real database.
 
 ```bash
-docker images clarity-spike --format '{{.Size}}'
+docker images clarity-runner-spike --format '{{.Size}}'
 ```
 
-Record the exact figure.
+Expected: `db push` succeeds and the size is far below Spike A's 1.25 GB. Record
+the actual number — it goes into the deploy docs.
 
-- [ ] **Step 6: Settle R1/R2/R4 on SQLite**
+- [ ] **Step 4: Tear down and revert**
 
 ```bash
-docker run -d --name spike-sqlite -p 3011:3000 \
-  -e DATABASE_URL="file:./data/clarity.db" \
-  -e NODE_ENV=production \
-  -e SESSION_SECRET=spike-not-a-real-secret \
-  -e CRM_PASSWORD=spike-not-a-real-password \
-  clarity-spike
-sleep 20
-docker logs spike-sqlite 2>&1 | tee "$SCRATCH/spike-sqlite.log"
-curl -s -o /dev/null -w '%{http_code}\n' http://localhost:3011/login
+docker rm -f $(docker ps -aq --filter "name=spike2") 2>/dev/null || true
+docker rmi clarity-runner-spike 2>/dev/null || true
+git checkout next.config.ts
 ```
 
-Expected: logs show `spike: R4 ... took Ns` (record N), the Prisma generate
-naming `sqlite`, and `curl` returns `200`. A 200 from a page that renders means
-the standalone server resolved the regenerated client — **that is R1**.
+- [ ] **Step 5: Write the findings and update the spec**
 
-- [ ] **Step 7: Settle R1/R2 on Postgres**
+Create `docs/superpowers/spikes/2026-07-23-phase-3-runner-spike.md` with a
+section per risk: theory, **verbatim observed output**, verdict. Then set R6 and
+R7's Status in the spec's risk table, and fix §2's "Runner contents" to name the
+mechanism that actually won rather than listing three candidates.
 
-```bash
-docker network create spike-net || true
-docker run -d --name spike-pg --network spike-net \
-  -e POSTGRES_PASSWORD=spike -e POSTGRES_DB=clarity postgres:16
-sleep 10
-docker run -d --name spike-postgres --network spike-net -p 3012:3000 \
-  -e DATABASE_URL="postgres://postgres:spike@spike-pg:5432/clarity" \
-  -e NODE_ENV=production \
-  -e SESSION_SECRET=spike-not-a-real-secret \
-  -e CRM_PASSWORD=spike-not-a-real-password \
-  clarity-spike
-sleep 25
-docker logs spike-postgres 2>&1 | tee "$SCRATCH/spike-postgres.log"
-curl -s -o /dev/null -w '%{http_code}\n' http://localhost:3012/login
-```
-
-Expected: the *same image* generates a `postgresql` client and serves `200`.
-That is the core R1 claim — one image, both providers. Record the R4 timing for
-this leg too (Postgres is the slower one).
-
-- [ ] **Step 8: Tear down**
+- [ ] **Step 6: Commit**
 
 ```bash
-docker rm -f spike-sqlite spike-postgres spike-pg 2>/dev/null || true
-docker network rm spike-net 2>/dev/null || true
-docker rmi clarity-spike 2>/dev/null || true
-```
-
-- [ ] **Step 9: Write the findings document**
-
-Create `docs/superpowers/spikes/2026-07-23-phase-3-docker-spike.md` with a
-section per risk. Each section states the theory, the **verbatim observed
-output** (log excerpt, HTTP code, measured number), and a verdict of
-**Confirmed** or **Refuted**. No verdict may rest on reasoning. Close with a
-"Consequences for the plan" section naming any task that must change.
-
-- [ ] **Step 10: Commit**
-
-```bash
-git add docs/superpowers/spikes/2026-07-23-phase-3-docker-spike.md
-git commit -m "docs: Phase 3 Docker spike findings (R1-R5)"
-```
-
-Confirm nothing from the scratchpad leaked in:
-
-```bash
+git add docs/superpowers/spikes/2026-07-23-phase-3-runner-spike.md docs/superpowers/specs/2026-07-23-phase-3-deploy-design.md
+git commit -m "docs: Phase 3 runner spike findings (R6, R7)"
 git status --porcelain
 ```
 
-Expected: clean; no `Dockerfile.spike` or `entrypoint.spike.sh`.
+Expected: clean tree, no scratch files, `next.config.ts` unmodified.
 
----
-
-### Task 2: Update the spec with spike findings — GATE
-
-**Files:**
-- Modify: `docs/superpowers/specs/2026-07-23-phase-3-deploy-design.md` (risk table)
-
-- [ ] **Step 1: Update each risk row's Status**
-
-Change every `Unproven`/`Unmeasured` to `Confirmed` or `Refuted`, each linking to
-the spike document. Replace R4 and R5's placeholder framing with the measured
-numbers.
-
-- [ ] **Step 2: Handle any refutation**
-
-If any row is **Refuted**, stop here and revise the affected spec section before
-touching Phase B. For R1 specifically the recorded fallback is the build-arg
-variant, which changes Tasks 6 and 7 substantially — that is a spec revision and
-a fresh review, not an in-flight patch.
-
-- [ ] **Step 3: Commit**
-
-```bash
-git add docs/superpowers/specs/2026-07-23-phase-3-deploy-design.md
-git commit -m "docs: record Phase 3 spike outcomes in the design spec"
-```
-
-**GATE: do not start Task 3 until every risk row reads Confirmed.**
-
----
+**GATE: Task 6 may not start until R6 and R7 read Confirmed.** Tasks 3–5 are
+independent of both and may proceed regardless.
 
 # Phase B — Production artifacts
 
@@ -288,12 +200,28 @@ describe('next.config — deployability', () => {
 describe('package.json — container runtime deps', () => {
   const pkg = JSON.parse(readFileSync('package.json', 'utf8'))
 
-  // The container entrypoint runs db:generate and db:push, both of which route
-  // through scripts/prisma-provider.ts — so tsx is a runtime dependency, not a
-  // dev one. See docs/superpowers/specs/2026-07-23-phase-3-deploy-design.md §2.
+  // The container entrypoint runs db:push, which routes through
+  // scripts/prisma-provider.ts — so tsx is a runtime dependency, not a dev one.
+  // See docs/superpowers/specs/2026-07-23-phase-3-deploy-design.md §2.
   it('ships tsx as a production dependency', () => {
     expect(pkg.dependencies).toHaveProperty('tsx')
     expect(pkg.devDependencies ?? {}).not.toHaveProperty('tsx')
+  })
+})
+
+describe('.dockerignore', () => {
+  const ignore = readFileSync('.dockerignore', 'utf8')
+
+  // Spike A measured a 751.70 MB context carrying a macOS-native node_modules
+  // that `COPY . .` layers over the Linux one built in the deps stage.
+  it('excludes the host node_modules and build output', () => {
+    for (const entry of ['node_modules', '.next', 'data']) {
+      expect(ignore).toContain(entry)
+    }
+  })
+
+  it('keeps secrets out of the build context', () => {
+    expect(ignore).toContain('.env')
   })
 })
 ```
@@ -333,12 +261,28 @@ Edit `package.json` by hand: delete the `"tsx": "^4.22.4"` line from
 npm install
 ```
 
-- [ ] **Step 5: Run the test to verify it passes**
+- [ ] **Step 5: Write `.dockerignore`**
+
+```
+node_modules
+.next
+data
+.git
+.env
+.env.local
+.claude
+docs
+tests
+*.md
+!README.md
+```
+
+- [ ] **Step 6: Run the test to verify it passes**
 
 Run: `npx vitest run tests/deploy-config.test.ts`
-Expected: PASS (3 tests).
+Expected: PASS (5 tests).
 
-- [ ] **Step 6: Verify the build still works**
+- [ ] **Step 7: Verify the build still works**
 
 ```bash
 npm run db:generate && npx next build
@@ -350,11 +294,11 @@ Expected: build succeeds and reports standalone output. Confirm the server file 
 test -f .next/standalone/server.js && echo "standalone server present"
 ```
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
-git add next.config.ts package.json package-lock.json tests/deploy-config.test.ts
-git commit -m "feat(deploy): standalone output; tsx becomes a runtime dependency"
+git add next.config.ts package.json package-lock.json .dockerignore tests/deploy-config.test.ts
+git commit -m "feat(deploy): standalone output, .dockerignore, tsx as a runtime dependency"
 ```
 
 ---
@@ -594,15 +538,15 @@ git commit -m "feat(deploy): fail boot on an unmappable DATABASE_URL"
 
 ---
 
-### Task 6: Dockerfile and `.dockerignore`
+### Task 6: Dockerfile
 
 **Files:**
-- Create: `Dockerfile`, `.dockerignore`
+- Create: `Dockerfile`
 - Test: `tests/dockerfile.test.ts`
 
-The Dockerfile below is the spike's `Dockerfile.spike` promoted to production
-shape: non-root user, pinned base, no scratch entrypoint. **If Task 1 refuted any
-theory, this file must reflect the corrected design.**
+**Depends on Task 2b.** The runner's tooling layer below uses candidate 1 (a
+production-only install). **If Task 2b's findings selected a different mechanism,
+the findings doc is authoritative — use what actually worked.**
 
 - [ ] **Step 1: Write the failing test**
 
@@ -620,29 +564,41 @@ describe('Dockerfile', () => {
     expect(dockerfile).not.toContain('alpine')
   })
 
-  it('runs as a non-root user', () => {
-    expect(dockerfile).toMatch(/^USER\s+(?!root)/m)
+  it('takes the provider as a build arg, defaulting to sqlite', () => {
+    expect(dockerfile).toMatch(/ARG DB_PROVIDER=sqlite/)
   })
 
-  it('ships the pieces the entrypoint needs to regenerate the client', () => {
-    expect(dockerfile).toContain('prisma.config.ts')
-    expect(dockerfile).toContain('scripts')
-    expect(dockerfile).toContain('.next/standalone')
+  // The entrypoint compares this against the runtime DATABASE_URL, so a
+  // mismatch fails at boot rather than as a 500 on the first query (P3-6).
+  it('records the baked provider in the image environment', () => {
+    expect(dockerfile).toMatch(/ENV CLARITY_DB_PROVIDER/)
+  })
+
+  // next build instantiates PrismaClient during page-data collection, so
+  // DATABASE_URL must be present for BOTH commands — spike R1/R6.
+  it('supplies DATABASE_URL to both db:generate and next build', () => {
+    const generate = dockerfile.match(/^.*db:generate.*$/m)?.[0] ?? ''
+    const build = dockerfile.match(/^.*next build.*$/m)?.[0] ?? ''
+    expect(generate).toContain('DATABASE_URL')
+    expect(build).toContain('DATABASE_URL')
+  })
+
+  // A real URL at build time would bake credentials into image history.
+  it('uses an unreachable dummy URL at build time, never a real one', () => {
+    expect(dockerfile).toContain('127.0.0.1:1')
+  })
+
+  it('installs openssl so Prisma can detect libssl', () => {
+    expect(dockerfile).toContain('openssl')
+  })
+
+  it('runs as a non-root user', () => {
+    expect(dockerfile).toMatch(/^USER\s+(?!root)/m)
   })
 
   it('delegates startup to the entrypoint rather than running the server directly', () => {
     expect(dockerfile).toContain('docker-entrypoint.sh')
     expect(dockerfile).toMatch(/ENTRYPOINT/)
-  })
-})
-
-describe('.dockerignore', () => {
-  const ignore = readFileSync('.dockerignore', 'utf8')
-
-  it('keeps secrets and local state out of the build context', () => {
-    for (const entry of ['.env', '.env.local', 'node_modules', '.next', 'data']) {
-      expect(ignore).toContain(entry)
-    }
   })
 })
 ```
@@ -652,59 +608,67 @@ describe('.dockerignore', () => {
 Run: `npx vitest run tests/dockerfile.test.ts`
 Expected: FAIL — `ENOENT` on `Dockerfile`.
 
-- [ ] **Step 3: Write `.dockerignore`**
-
-```
-node_modules
-.next
-data
-.git
-.env
-.env.local
-.claude
-docs
-tests
-*.md
-!README.md
-```
-
-- [ ] **Step 4: Write the `Dockerfile`**
+- [ ] **Step 3: Write the `Dockerfile`**
 
 ```dockerfile
 # syntax=docker/dockerfile:1
 
-# Debian slim, not Alpine: better-sqlite3 ships prebuilt binaries against glibc;
-# musl would force a compile-from-source. Confirmed by the Phase 3 spike (R3) —
-# docs/superpowers/spikes/2026-07-23-phase-3-docker-spike.md
+# The provider is a BUILD INPUT, not a runtime choice. Next inlines the
+# generated Prisma client — schema text included — into .next/server/chunks at
+# build time, so one image serves exactly one provider. Regenerating at boot was
+# tried and proven useless:
+# docs/superpowers/spikes/2026-07-23-phase-3-docker-spike.md (R1)
+ARG DB_PROVIDER=sqlite
+
 FROM node:22-slim AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
 
+# Production-only tree: supplies the prisma CLI and tsx that the entrypoint's
+# `db push` needs. The traced standalone bundle already carries the driver
+# adapters and native modules (spike R2), so this layer exists only for the CLI.
+FROM node:22-slim AS tooling
+WORKDIR /tools
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev
+
 FROM node:22-slim AS builder
+ARG DB_PROVIDER
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-# A client must exist for typecheck and tracing to succeed. The provider chosen
-# here is irrelevant — the entrypoint regenerates for the real DATABASE_URL.
-RUN npm run db:generate
-RUN npx next build
+# A dummy URL of the correct scheme. next build instantiates PrismaClient during
+# page-data collection, so DATABASE_URL must be set — but a real one would bake
+# credentials into image history. Port 1 is closed by definition.
+RUN case "$DB_PROVIDER" in \
+      sqlite)   echo 'file:./data/build.db' > /tmp/build-url ;; \
+      postgres) echo 'postgres://build:build@127.0.0.1:1/build' > /tmp/build-url ;; \
+      *) echo "FATAL: DB_PROVIDER must be sqlite or postgres, got '$DB_PROVIDER'" >&2; exit 1 ;; \
+    esac
+RUN DATABASE_URL="$(cat /tmp/build-url)" npm run db:generate
+RUN DATABASE_URL="$(cat /tmp/build-url)" npx next build
 
 FROM node:22-slim AS runner
+ARG DB_PROVIDER
 WORKDIR /app
 ENV NODE_ENV=production
 ENV PORT=3000
 ENV HOSTNAME=0.0.0.0
+# Read by docker-entrypoint.sh to reject a mismatched DATABASE_URL at boot.
+ENV CLARITY_DB_PROVIDER=${DB_PROVIDER}
+
+# Without this every Prisma invocation warns that it cannot detect libssl.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends openssl \
+ && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
 COPY --from=builder /app/public ./public
 
-# The standalone bundle's node_modules is a traced subset and omits the prisma
-# CLI and tsx, both of which boot-time regeneration needs. Layering the full
-# production tree over it is the deliberate trade: correctness now, slimming
-# later. See the spec §2.
-COPY --from=deps /app/node_modules ./node_modules
+# Layered second so the CLI-bearing production tree wins over the traced subset.
+COPY --from=tooling /tools/node_modules ./node_modules
 
 COPY --from=builder /app/prisma ./prisma
 COPY --from=builder /app/prisma.config.ts ./prisma.config.ts
@@ -713,10 +677,9 @@ COPY --from=builder /app/lib ./lib
 COPY --from=builder /app/package.json ./package.json
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 
-# The entrypoint writes a regenerated client into app/generated/prisma and a
-# SQLite file into data/, so both must be owned by the runtime user.
+# db push writes a SQLite file into data/; the runtime user must own it.
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh \
- && mkdir -p /app/data /app/app/generated \
+ && mkdir -p /app/data \
  && chown -R node:node /app
 
 USER node
@@ -724,16 +687,35 @@ EXPOSE 3000
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 ```
 
-- [ ] **Step 5: Run the test to verify it passes**
+- [ ] **Step 4: Run the test to verify it passes**
 
 Run: `npx vitest run tests/dockerfile.test.ts`
-Expected: PASS (5 tests).
+Expected: PASS (8 tests).
+
+- [ ] **Step 5: Verify both variants build**
+
+```bash
+docker build --build-arg DB_PROVIDER=sqlite -t clarity-crm:sqlite .
+docker build --build-arg DB_PROVIDER=postgres -t clarity-crm:postgres .
+docker images --format '{{.Repository}}:{{.Tag}} {{.Size}}' | grep clarity-crm
+```
+
+Expected: both build; sizes far below Spike A's 1.25 GB. Record the actual figures
+— they go into the deploy docs in Task 11.
+
+Also confirm the invalid case is rejected:
+
+```bash
+docker build --build-arg DB_PROVIDER=mysql -t clarity-crm:bad . 2>&1 | tail -3
+```
+
+Expected: build fails naming the accepted values.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add Dockerfile .dockerignore tests/dockerfile.test.ts
-git commit -m "feat(deploy): multi-stage Dockerfile with a non-root runtime"
+git add Dockerfile tests/dockerfile.test.ts
+git commit -m "feat(deploy): provider-parameterised multi-stage Dockerfile"
 ```
 
 ---
@@ -743,6 +725,10 @@ git commit -m "feat(deploy): multi-stage Dockerfile with a non-root runtime"
 **Files:**
 - Create: `docker-entrypoint.sh`
 - Test: `tests/docker-entrypoint.test.ts`
+
+This is where P3-6 lives. Spike A observed the failure it prevents: a SQLite
+image against Postgres served `/login` with a `200` and returned 500 on every
+query. Silent wrongness is the thing to design out.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -759,13 +745,26 @@ describe('docker-entrypoint.sh', () => {
     expect(script).toMatch(/set -e/)
   })
 
-  it('regenerates the client and applies the schema before serving', () => {
-    const generate = script.indexOf('db:generate')
+  // P3-6: the client is compiled into the bundle, so a mismatch can only be
+  // fixed by rebuilding. Catch it at boot, not at the first query.
+  it('compares the runtime URL against the baked provider', () => {
+    expect(script).toContain('CLARITY_DB_PROVIDER')
+  })
+
+  it('tells the operator to rebuild when they mismatch', () => {
+    expect(script).toMatch(/DB_PROVIDER=/)
+  })
+
+  it('applies the schema before serving', () => {
     const push = script.indexOf('db:push')
     const serve = script.indexOf('server.js')
-    expect(generate).toBeGreaterThan(-1)
-    expect(push).toBeGreaterThan(generate)
+    expect(push).toBeGreaterThan(-1)
     expect(serve).toBeGreaterThan(push)
+  })
+
+  // Spike A proved boot regeneration is useless: Next inlines the client.
+  it('does not waste a second regenerating a client that is already baked in', () => {
+    expect(script).not.toContain('db:generate')
   })
 
   it('execs the server so it receives signals as PID 1', () => {
@@ -795,16 +794,18 @@ Expected: FAIL — `ENOENT` on `docker-entrypoint.sh`.
 #!/bin/sh
 # Boot sequence for the Clarity CRM container.
 #
-# One image serves both providers: the Prisma client is generated here, from the
-# DATABASE_URL this container is actually about to use, which makes a provider
-# mismatch structurally impossible. See
-# docs/superpowers/specs/2026-07-23-phase-3-deploy-design.md (P3-1, P3-2).
+# The Prisma client is compiled into the server bundle at build time, so this
+# image serves exactly one database provider. The check below turns a mismatch
+# into an immediate, explicit failure — without it the app boots, serves /login
+# with a 200, and returns 500 on every query. That was observed, not imagined:
+# docs/superpowers/spikes/2026-07-23-phase-3-docker-spike.md (R1)
 set -e
 
 DB_URL="${DATABASE_URL:-file:./data/clarity.db}"
 
 case "$DB_URL" in
-  file:*|postgres://*|postgresql://*) ;;
+  file:*)                        RUNTIME_PROVIDER=sqlite ;;
+  postgres://*|postgresql://*)   RUNTIME_PROVIDER=postgres ;;
   *)
     echo "FATAL: unsupported DATABASE_URL \"$DB_URL\"." >&2
     echo "Use file: (SQLite) or postgres:// / postgresql:// (Postgres)." >&2
@@ -812,14 +813,24 @@ case "$DB_URL" in
     ;;
 esac
 
-export DATABASE_URL="$DB_URL"
+BAKED="${CLARITY_DB_PROVIDER:-sqlite}"
 
-echo "clarity: generating the Prisma client for this DATABASE_URL..."
-npm run db:generate
+if [ "$RUNTIME_PROVIDER" != "$BAKED" ]; then
+  echo "FATAL: this image was built for '$BAKED', but DATABASE_URL is '$RUNTIME_PROVIDER'." >&2
+  echo "The Prisma client is compiled into the server bundle and cannot be swapped at runtime." >&2
+  echo "Rebuild for the provider you want:" >&2
+  echo "  docker build --build-arg DB_PROVIDER=$RUNTIME_PROVIDER -t clarity-crm ." >&2
+  echo "or, with compose:" >&2
+  echo "  docker compose -f docker-compose.postgres.yml up -d --build   # Postgres" >&2
+  echo "  docker compose up -d --build                                  # SQLite" >&2
+  exit 1
+fi
+
+export DATABASE_URL="$DB_URL"
 
 # `db push` without --accept-data-loss: additive changes apply, destructive ones
 # stop the boot rather than silently dropping data.
-echo "clarity: applying schema..."
+echo "clarity: applying schema (provider: $BAKED)..."
 npm run db:push
 
 echo "clarity: starting server on port ${PORT:-3000}..."
@@ -836,30 +847,42 @@ git update-index --chmod=+x docker-entrypoint.sh 2>/dev/null || true
 - [ ] **Step 5: Run the test to verify it passes**
 
 Run: `npx vitest run tests/docker-entrypoint.test.ts`
-Expected: PASS (5 tests).
+Expected: PASS (8 tests).
 
-- [ ] **Step 6: Build and boot the real image on SQLite**
+- [ ] **Step 6: Prove the happy path on SQLite**
 
 ```bash
-docker build -t clarity-crm:local .
+docker build --build-arg DB_PROVIDER=sqlite -t clarity-crm:sqlite .
 docker run -d --name clarity-local -p 3010:3000 \
   -e SESSION_SECRET=local-not-a-real-secret \
   -e CRM_PASSWORD=local-not-a-real-password \
-  clarity-crm:local
+  clarity-crm:sqlite
 sleep 25
-curl -s -o /dev/null -w '%{http_code}\n' http://localhost:3010/api/health
+curl -s -o /dev/null -w 'health: %{http_code}\n' http://localhost:3010/api/health
 docker logs clarity-local | tail -20
 docker rm -f clarity-local
 ```
 
-Expected: `200`. If not, read the logs and fix before committing — this is the
-first end-to-end proof of the production artifacts.
+Expected: `health: 200`.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 7: Prove the mismatch is caught — the regression test for R1**
+
+```bash
+docker run --rm --name clarity-mismatch \
+  -e DATABASE_URL="postgres://u:p@nowhere:5432/clarity" \
+  -e SESSION_SECRET=local-not-a-real-secret \
+  -e CRM_PASSWORD=local-not-a-real-password \
+  clarity-crm:sqlite; echo "exit: $?"
+```
+
+Expected: a non-zero exit and the "built for 'sqlite'" message. **A zero exit
+here means P3-6 does not work and the task is not done** — do not proceed.
+
+- [ ] **Step 8: Commit**
 
 ```bash
 git add docker-entrypoint.sh tests/docker-entrypoint.test.ts
-git commit -m "feat(deploy): entrypoint regenerates the client and applies schema at boot"
+git commit -m "feat(deploy): entrypoint rejects a provider mismatch at boot"
 ```
 
 ---
@@ -870,8 +893,8 @@ git commit -m "feat(deploy): entrypoint regenerates the client and applies schem
 - Create: `docker-compose.yml`, `docker-compose.postgres.yml`
 - Test: `tests/compose.test.ts`
 
-Use the R4 figure measured in Task 1 for `start_period`. Round up generously —
-a healthcheck that fires before regeneration finishes reports a false failure.
+`start_period: 30s` is spike-measured (R4: worst case 2.4 s to a DB-backed 200),
+not a guess.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -885,6 +908,10 @@ const sqlite = readFileSync('docker-compose.yml', 'utf8')
 const postgres = readFileSync('docker-compose.postgres.yml', 'utf8')
 
 describe('docker-compose.yml (SQLite default)', () => {
+  it('builds the sqlite image variant', () => {
+    expect(sqlite).toMatch(/DB_PROVIDER:\s*sqlite/)
+  })
+
   it('defaults to a SQLite file URL', () => {
     expect(sqlite).toContain('file:./data/clarity.db')
   })
@@ -894,17 +921,24 @@ describe('docker-compose.yml (SQLite default)', () => {
     expect(sqlite).toMatch(/volumes:/)
   })
 
-  it('healthchecks via /api/health with a start period for boot regeneration', () => {
+  // /login returned 200 throughout a completely broken run in spike A — only a
+  // DB-backed endpoint tells the truth.
+  it('healthchecks via /api/health, never /login', () => {
     expect(sqlite).toContain('/api/health')
+    expect(sqlite).not.toContain('/login')
     expect(sqlite).toContain('start_period')
   })
 
   it('does not hardcode secrets', () => {
-    expect(sqlite).not.toMatch(/SESSION_SECRET:\s*\S+/)
+    expect(sqlite).not.toMatch(/SESSION_SECRET:\s*[a-z]/i)
   })
 })
 
 describe('docker-compose.postgres.yml', () => {
+  it('builds the postgres image variant', () => {
+    expect(postgres).toMatch(/DB_PROVIDER:\s*postgres/)
+  })
+
   it('runs postgres:16 alongside the app', () => {
     expect(postgres).toContain('postgres:16')
   })
@@ -930,16 +964,19 @@ Expected: FAIL — `ENOENT` on both compose files.
 
 - [ ] **Step 3: Write `docker-compose.yml`**
 
-Replace `<R4>` with the measured boot time, rounded up (e.g. `40s`).
-
 ```yaml
 # Clarity CRM — SQLite deployment (the zero-config default).
 # Start:  docker compose up -d
-# Secrets come from a local .env file; see docs/deploying.md.
+#
+# The image is built for SQLite. Switching to Postgres means a different image,
+# not just a different URL — use docker-compose.postgres.yml.
 services:
   app:
-    build: .
-    image: clarity-crm:local
+    build:
+      context: .
+      args:
+        DB_PROVIDER: sqlite
+    image: clarity-crm:sqlite
     restart: unless-stopped
     ports:
       - "3000:3000"
@@ -957,9 +994,8 @@ services:
       interval: 15s
       timeout: 5s
       retries: 5
-      # The entrypoint regenerates the Prisma client and applies the schema
-      # before serving; measured in the Phase 3 spike (R4).
-      start_period: <R4>
+      # Measured worst case was 2.4s to a DB-backed 200 (spike R4).
+      start_period: 30s
 
 volumes:
   clarity-data:
@@ -988,8 +1024,11 @@ services:
       retries: 10
 
   app:
-    build: .
-    image: clarity-crm:local
+    build:
+      context: .
+      args:
+        DB_PROVIDER: postgres
+    image: clarity-crm:postgres
     restart: unless-stopped
     depends_on:
       db:
@@ -1010,7 +1049,7 @@ services:
       interval: 15s
       timeout: 5s
       retries: 5
-      start_period: <R4>
+      start_period: 30s
 
 volumes:
   clarity-pgdata:
@@ -1019,7 +1058,7 @@ volumes:
 - [ ] **Step 5: Run the test to verify it passes**
 
 Run: `npx vitest run tests/compose.test.ts`
-Expected: PASS (8 tests).
+Expected: PASS (10 tests).
 
 - [ ] **Step 6: Verify both stacks really come up**
 
@@ -1031,14 +1070,13 @@ curl -s -o /dev/null -w 'sqlite: %{http_code}\n' http://localhost:3000/api/healt
 docker compose down -v
 
 docker compose -f docker-compose.postgres.yml up -d --build
-sleep 50
+sleep 60
 curl -s -o /dev/null -w 'postgres: %{http_code}\n' http://localhost:3000/api/health
 docker compose -f docker-compose.postgres.yml down -v
 rm -f .env
 ```
 
-Expected: `sqlite: 200` and `postgres: 200`. Confirm `.env` is gone and untracked
-(`.gitignore` already lists it).
+Expected: `sqlite: 200` and `postgres: 200`. Confirm `.env` is gone.
 
 - [ ] **Step 7: Commit**
 
@@ -1052,6 +1090,7 @@ git commit -m "feat(deploy): SQLite and Postgres compose stacks"
 ### Task 9: CI boot-smoke job
 
 **Files:**
+- Create: `scripts/wait-for-health.sh`
 - Modify: `.github/workflows/ci.yml`
 
 - [ ] **Step 1: Create the wait helper**
@@ -1096,17 +1135,27 @@ Append to `.github/workflows/ci.yml`, as a sibling of `verify`, `lint`, and `doc
 
       - uses: docker/setup-buildx-action@v3
 
-      # Build once, load into the local daemon, then boot it under both compose
-      # stacks. This job IS the phase exit criterion: "a clean fork yields a
-      # running instance" becomes a check rather than a claim.
-      - name: Build image
+      # One image per provider — the client is compiled into the bundle, so a
+      # single image cannot serve both (spike R1).
+      - name: Build sqlite image
         uses: docker/build-push-action@v6
         with:
           context: .
           load: true
-          tags: clarity-crm:local
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          build-args: DB_PROVIDER=sqlite
+          tags: clarity-crm:sqlite
+          cache-from: type=gha,scope=sqlite
+          cache-to: type=gha,mode=max,scope=sqlite
+
+      - name: Build postgres image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          build-args: DB_PROVIDER=postgres
+          tags: clarity-crm:postgres
+          cache-from: type=gha,scope=postgres
+          cache-to: type=gha,mode=max,scope=postgres
 
       - name: Write CI secrets file
         run: |
@@ -1129,10 +1178,25 @@ Append to `.github/workflows/ci.yml`, as a sibling of `verify`, `lint`, and `doc
           ./scripts/wait-for-health.sh http://localhost:3000/api/health 120 \
             || { docker compose -f docker-compose.postgres.yml logs; exit 1; }
           docker compose -f docker-compose.postgres.yml down -v
+
+      # Regression test for the exact failure the spike found: a sqlite-built
+      # image handed a Postgres URL must refuse to boot. Without this, P3-6 is
+      # an unverified promise — and the failure it guards against is invisible
+      # (the app serves /login with a 200 and 500s every query).
+      - name: Provider mismatch must fail closed
+        run: |
+          if docker run --rm \
+              -e DATABASE_URL="postgres://u:p@nowhere:5432/clarity" \
+              -e SESSION_SECRET=ci-not-a-real-secret \
+              -e CRM_PASSWORD=ci-not-a-real-password \
+              clarity-crm:sqlite; then
+            echo "::error::sqlite image accepted a Postgres URL — P3-6 is broken"
+            exit 1
+          fi
+          echo "provider mismatch correctly rejected"
 ```
 
-Note both stacks reuse the already-built `clarity-crm:local` image, so neither
-compose invocation rebuilds.
+Both compose stacks reuse the already-built images, so neither invocation rebuilds.
 
 - [ ] **Step 3: Verify the helper works against a local stack**
 
@@ -1149,14 +1213,14 @@ Expected: `healthy after Ns: http://localhost:3000/api/health`, exit 0.
 - [ ] **Step 4: Validate the workflow file parses**
 
 ```bash
-node -e "const {readFileSync}=require('fs');const s=readFileSync('.github/workflows/ci.yml','utf8');if(!s.includes('docker:'))throw new Error('docker job missing');console.log('ci.yml contains the docker job')"
+node -e "const {readFileSync}=require('fs');const s=readFileSync('.github/workflows/ci.yml','utf8');if(!s.includes('docker:'))throw new Error('docker job missing');if(!s.includes('mismatch'))throw new Error('mismatch regression step missing');console.log('ci.yml contains the docker job and the mismatch guard')"
 ```
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add .github/workflows/ci.yml scripts/wait-for-health.sh
-git commit -m "ci: boot-smoke the container image on both providers"
+git commit -m "ci: boot-smoke both provider images and assert mismatch fails closed"
 ```
 
 ---
@@ -1228,9 +1292,14 @@ A Diataxis how-to, in this order:
    `CRM_PASSWORD` are **fail-closed in production — the server refuses to boot
    without them** (`lib/env.ts`), and that a `DATABASE_URL` with an unrecognised
    scheme also refuses to boot.
-4. **Switching provider** — change `DATABASE_URL`, restart the container. Note
-   that unlike the host workflow, no manual `db:generate` is needed: the
-   entrypoint does it. Cross-reference the README's "Scale & production data"
+4. **Switching provider — requires a rebuild.** This section carries real weight
+   and must not be softened. The Prisma client is compiled into the server
+   bundle, so an image serves exactly one provider. Switching means
+   `docker compose -f docker-compose.postgres.yml up -d --build`, not just an
+   edited URL. Say what happens if the operator tries the URL-only route: the
+   container **refuses to boot**, by design, and prints the rebuild command. Note
+   that this is a deliberate guard — without it the app would start, serve pages,
+   and fail every query. Cross-reference the README's "Scale & production data"
    section rather than restating it.
 5. **Volumes and backup** — SQLite is the `clarity-data` volume (back up by
    copying the file); Postgres is `clarity-pgdata` (`pg_dump`). Link to the
@@ -1248,13 +1317,13 @@ A Diataxis how-to, in this order:
 - [ ] **Step 2: Replace the README section**
 
 Retitle `## Deploying (future — not done yet)` to `## Deploying`, and replace its
-body with a short summary: the two compose quickstart commands, the note that one
-image serves both providers because the client is generated at boot, and a link
+body with a short summary: the two compose quickstart commands, the note that
+each image is built for one provider (so switching means a rebuild), and a link
 to `docs/deploying.md`. Leave `### Scale & production data` untouched below it.
 
-Also fix the now-stale claim in the "Known notes" section: with the container,
-`app/generated/prisma` is regenerated automatically at boot. The note is still
-true for host development — scope it explicitly to that.
+The "Known notes" entry about `app/generated/prisma` needing regeneration after a
+fresh clone stays true and unchanged — it describes host development, and the
+container path generates the client during its build.
 
 - [ ] **Step 3: Update `.env.example`**
 
@@ -1294,8 +1363,8 @@ npm run db:generate && npx tsc --noEmit && npx vitest run
 ```
 
 Expected: tsc clean; all tests pass. Baseline entering Phase 3 was **190**; this
-plan adds 30 (Task 3: 3, Task 4: 5, Task 5: 4, Task 6: 5, Task 7: 5, Task 8: 8),
-so expect **220**. If the count differs, find out why before moving on.
+plan adds 40 (Task 3: 5, Task 4: 5, Task 5: 4, Task 6: 8, Task 7: 8, Task 8: 10),
+so expect **230**. If the count differs, find out why before moving on.
 
 - [ ] **Step 2: Re-verify both providers on the host**
 
@@ -1349,7 +1418,7 @@ Then open the PR with a body covering, under these headings:
 
 - **What shipped** — the artifact list from the File structure table
 - **Spike findings** — each risk R1–R5, its verdict, and the evidence
-- **Measured numbers** — image size, boot regeneration time, healthcheck `start_period`
+- **Measured numbers** — image size per variant, boot time to a DB-backed 200, healthcheck `start_period`
 - **Repo settings changed** — the Task 10 ruleset edit, and who approved it
 - **Deliberate scope cuts** — Vercel, Fly.io, TLS/reverse proxy, registry
   publishing, multi-arch builds; each with its one-line reason
@@ -1372,8 +1441,9 @@ Expected: all checks pass, including the new `Docker · boot smoke`.
 
 - [ ] `docker compose up` on a clean fork yields a working instance on SQLite
 - [ ] `docker compose -f docker-compose.postgres.yml up` does the same on Postgres
-- [ ] One image serves both providers — no rebuild when switching
-- [ ] CI proves both, on every PR
+- [ ] A provider mismatch fails at boot with a rebuild instruction, never at
+      first query — asserted by CI, not just by the entrypoint
+- [ ] CI proves both providers boot, on every PR
 - [ ] `docs/deploying.md` is followable start to finish by someone who has never
       seen the repo, with every command verified
 - [ ] Spec risk table has no `Unproven` or `Unmeasured` rows left
