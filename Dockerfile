@@ -49,6 +49,10 @@ ENV PORT=3000
 ENV HOSTNAME=0.0.0.0
 # Read by docker-entrypoint.sh to reject a mismatched DATABASE_URL at boot.
 ENV CLARITY_DB_PROVIDER=${DB_PROVIDER}
+# npm's update-notifier prints a "New major version of npm available!" banner
+# into the boot log. CI dumps container logs on a failed boot smoke, and that is
+# precisely when the reader needs signal rather than noise.
+ENV NPM_CONFIG_UPDATE_NOTIFIER=false
 
 # Without this every Prisma invocation warns it cannot detect libssl.
 RUN apt-get update \

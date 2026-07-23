@@ -123,3 +123,77 @@ jobs:
         env:
           DOCS_CHECK_BASE: origin/${{ github.base_ref }}
         run: node scripts/check-docs-updated.mjs || true
+
+  # The phase exit criterion, made checkable: "a clean fork yields a running
+  # instance" is asserted here rather than claimed in a README.
+  docker:
+    name: Docker · boot smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: docker/setup-buildx-action@v3
+
+      # One image per provider — the client is compiled into the bundle, so a
+      # single image cannot serve both (spike R1).
+      - name: Build sqlite image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          build-args: DB_PROVIDER=sqlite
+          tags: clarity-crm:sqlite
+          cache-from: type=gha,scope=sqlite
+          cache-to: type=gha,mode=max,scope=sqlite
+
+      - name: Build postgres image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          build-args: DB_PROVIDER=postgres
+          tags: clarity-crm:postgres
+          cache-from: type=gha,scope=postgres
+          cache-to: type=gha,mode=max,scope=postgres
+
+      # Compose reads .env from the repo root. Dummy values satisfy the
+      # fail-closed boot checks; they are not real and grant no access.
+      - name: Write CI secrets file
+        run: |
+          {
+            echo "SESSION_SECRET=ci-not-a-real-secret"
+            echo "CRM_PASSWORD=ci-not-a-real-password"
+            echo "POSTGRES_PASSWORD=ci-not-a-real-password"
+          } > .env
+
+      # Both stacks reuse the images built above, so neither invocation
+      # rebuilds. Logs are dumped on failure — a silent boot smoke is useless.
+      - name: Boot smoke — SQLite
+        run: |
+          docker compose up -d
+          ./scripts/wait-for-health.sh http://localhost:3000/api/health 90 \
+            || { docker compose logs; exit 1; }
+          docker compose down -v
+
+      - name: Boot smoke — Postgres
+        run: |
+          docker compose -f docker-compose.postgres.yml up -d
+          ./scripts/wait-for-health.sh http://localhost:3000/api/health 120 \
+            || { docker compose -f docker-compose.postgres.yml logs; exit 1; }
+          docker compose -f docker-compose.postgres.yml down -v
+
+      # Regression test for the exact failure the spike found: a sqlite-built
+      # image handed a Postgres URL must refuse to boot. Without this, P3-6 is
+      # an unverified promise — and the failure it guards against is invisible
+      # (the app serves /login with a 200 and 500s every query).
+      - name: Provider mismatch must fail closed
+        run: |
+          if docker run --rm \
+              -e DATABASE_URL="postgres://u:p@nowhere:5432/clarity" \
+              -e SESSION_SECRET=ci-not-a-real-secret \
+              -e CRM_PASSWORD=ci-not-a-real-password \
+              clarity-crm:sqlite; then
+            echo "::error::sqlite image accepted a Postgres URL — P3-6 is broken"
+            exit 1
+          fi
+          echo "provider mismatch correctly rejected"
