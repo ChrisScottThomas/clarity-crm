@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach, vi } from 'vitest'
-import { getSessionSecret, assertProductionSecrets } from '../lib/env'
+import { getSessionSecret, assertProductionSecrets, assertDatabaseUrl } from '../lib/env'
 
 afterEach(() => {
   vi.unstubAllEnvs()
@@ -44,5 +44,28 @@ describe('env — assertProductionSecrets (boot-time fail-closed)', () => {
     vi.stubEnv('SESSION_SECRET', 'set')
     vi.stubEnv('CRM_PASSWORD', '')
     expect(() => assertProductionSecrets()).toThrow(/CRM_PASSWORD/)
+  })
+})
+
+describe('env — DATABASE_URL validation', () => {
+  it('accepts a sqlite file URL', () => {
+    vi.stubEnv('DATABASE_URL', 'file:./data/clarity.db')
+    expect(() => assertDatabaseUrl()).not.toThrow()
+  })
+
+  it('accepts a postgres URL', () => {
+    vi.stubEnv('DATABASE_URL', 'postgres://u:p@host:5432/clarity')
+    expect(() => assertDatabaseUrl()).not.toThrow()
+  })
+
+  it('accepts an unset DATABASE_URL (the sqlite dev default applies)', () => {
+    vi.stubEnv('DATABASE_URL', '')
+    expect(() => assertDatabaseUrl()).not.toThrow()
+  })
+
+  it('throws on an unsupported scheme, naming what is accepted', () => {
+    vi.stubEnv('DATABASE_URL', 'mysql://u:p@host:3306/clarity')
+    expect(() => assertDatabaseUrl()).toThrow(/file:/)
+    expect(() => assertDatabaseUrl()).toThrow(/postgres/)
   })
 })
