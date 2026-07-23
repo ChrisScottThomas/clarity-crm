@@ -37,4 +37,9 @@ describe('proxy — auth gate', () => {
     const res = get('/leads', makeToken())
     expect(res.headers.get('location')).toBeNull()
   })
+
+  it('lets the health endpoint through without a session cookie', () => {
+    const res = get('/api/health')
+    expect(res.headers.get('location')).toBeNull()
+  })
 })
