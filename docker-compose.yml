@@ -1,0 +1,34 @@
+# Clarity CRM — SQLite deployment (the zero-config default).
+# Start:  docker compose up -d
+#
+# The image is built for SQLite. Switching to Postgres means a different image,
+# not just a different URL — use docker-compose.postgres.yml.
+services:
+  app:
+    build:
+      context: .
+      args:
+        DB_PROVIDER: sqlite
+    image: clarity-crm:sqlite
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      DATABASE_URL: file:./data/clarity.db
+      NODE_ENV: production
+      SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET in .env}
+      CRM_PASSWORD: ${CRM_PASSWORD:?set CRM_PASSWORD in .env}
+      TEAM_EMAILS: ${TEAM_EMAILS:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    volumes:
+      - clarity-data:/app/data
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      # Measured worst case was 2.4s to a DB-backed 200 (spike R4).
+      start_period: 30s
+
+volumes:
+  clarity-data:

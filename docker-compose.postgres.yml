@@ -1,0 +1,49 @@
+# Clarity CRM — Postgres deployment.
+# Start:  docker compose -f docker-compose.postgres.yml up -d
+# Self-contained: does not layer on docker-compose.yml.
+services:
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-clarity}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-clarity}
+    volumes:
+      - clarity-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-clarity}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  app:
+    build:
+      context: .
+      args:
+        DB_PROVIDER: postgres
+    image: clarity-crm:postgres
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-clarity}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-clarity}
+      NODE_ENV: production
+      SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET in .env}
+      CRM_PASSWORD: ${CRM_PASSWORD:?set CRM_PASSWORD in .env}
+      TEAM_EMAILS: ${TEAM_EMAILS:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      # Keep replicas x pool under the database's connection limit.
+      DATABASE_POOL_MAX: ${DATABASE_POOL_MAX:-10}
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+volumes:
+  clarity-pgdata:
