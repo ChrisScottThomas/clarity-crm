@@ -4,7 +4,8 @@
 **Status:** Approved — **revised 2026-07-23 after the Docker spike refuted P3-1**
 **Parent plan:** [`../plans/2026-07-22-shipping-state-plan.md`](../plans/2026-07-22-shipping-state-plan.md), Phase 3
 **Builds on:** [`2026-07-22-phase-2-dual-db-design.md`](2026-07-22-phase-2-dual-db-design.md)
-**Spike evidence:** [`../spikes/2026-07-23-phase-3-docker-spike.md`](../spikes/2026-07-23-phase-3-docker-spike.md)
+**Spike evidence:** [`../spikes/2026-07-23-phase-3-docker-spike.md`](../spikes/2026-07-23-phase-3-docker-spike.md) (R1–R5),
+[`../spikes/2026-07-23-phase-3-runner-spike.md`](../spikes/2026-07-23-phase-3-runner-spike.md) (R6–R7)
 
 ## Revision history
 
@@ -12,6 +13,7 @@
 |------|--------|
 | 2026-07-23 | Original design: one universal image regenerating the Prisma client at boot |
 | 2026-07-23 | **Revised** after spike: R1 refuted, R5 refuted as specified. Provider becomes a *build input*; the runner is slimmed |
+| 2026-07-23 | **Revised** after the runner spike: R6 confirmed (dummy unreachable build URL is safe); R7 confirmed at 549 MB, but only via a self-contained tooling tree — `npm ci --omit=dev` refuted on size. §2 now names the mechanism |
 
 ## Context
 
@@ -106,31 +108,59 @@ scheme. It must be a dummy: a real URL would bake credentials into image history
 **`next build` requires `DATABASE_URL` to be set** — the spike found it
 instantiates PrismaClient during page-data collection, and its absence is a hard
 build failure (`Failed to collect page data for /api/leads/[id]/relationship`).
-Whether an *unreachable* dummy Postgres URL suffices is **risk R6** — the spike
-used a reachable one, so this is unproven and must be settled before Task 6.
+
+**R6 is confirmed**: an *unreachable* dummy URL is enough. `next build` only
+*constructs* the client, it never connects. `postgres://build:build@127.0.0.1:1/build`
+— port 1, closed by definition — emitted all 36 routes with exit 0 and no
+connection attempt anywhere in the log, on the host and again inside Docker. So
+the builder hardcodes a dummy URL per provider and **no real credentials enter
+image history**, and no throwaway database is needed in the build.
 
 ### Runner contents
 
 The original design layered a full `npm ci` `node_modules` into the runner. The
-spike refuted its justification (R2: the traced tree already has the native
-modules) and measured its cost (R5: **927 MB** of a **1.25 GB** image, against a
-76.8 MB standalone bundle and a 247 MB base).
+first spike refuted its justification (R2: the traced tree already has the native
+modules) and measured its cost (R5: **927 MB** of a **1.25 GB** image).
 
-The runner therefore ships the standalone bundle plus **only** what `db push`
-needs — the `prisma` CLI and `tsx`. The mechanism and the resulting size are
-**risk R7**, to be settled by spike before Task 6. Candidate mechanisms, in order
-of preference:
+**The runner ships the standalone bundle plus a self-contained tooling tree
+holding only the `prisma` CLI and `tsx`, merged into `/app/node_modules`, with
+the standalone tree copied last.** Measured: **549 MB**, `db push` exit 0,
+`POST /api/leads` → `201` against a real Postgres.
 
-1. A production-only (`npm ci --omit=dev`) tooling install — measure it first;
-   the 927 MB figure came from a full install including the vitest and TypeScript
-   trees.
-2. A self-contained tooling directory (`/opt/prisma-cli`) with its own minimal
-   `package.json`.
-3. Precompiling the entrypoint's TypeScript to plain JS so `tsx` is unnecessary
-   at runtime.
+```dockerfile
+# Order is load-bearing: tooling first, standalone last, so the traced tree
+# wins every conflict (otherwise the CLI's transitive react-dom/next win).
+COPY --from=tooling --chown=node:node /opt/tooling/node_modules ./node_modules
+COPY --from=builder --chown=node:node /app/.next/standalone ./
+```
 
-`openssl` is installed in the runner: every Prisma invocation in the spike warned
-`Prisma failed to detect the libssl/openssl version`.
+Three constraints the R7 spike established, each from an observed failure:
+
+1. **The tooling must live *at* `/app/node_modules`, not beside it.** A
+   `/opt/tooling` directory on `PATH` failed twice over: `npx` ignores `PATH`
+   and silently **network-installed prisma@7.9.0** against the 7.8.0 baked
+   client, and `prisma.config.ts`'s `import "dotenv/config"` resolves from
+   `/app`, where the traced tree has no `dotenv`.
+2. **Never `RUN chown -R` in the runner** — it rewrites every file's metadata and
+   so writes a second complete copy into the layer. Measured cost: **819 MB**,
+   taking an otherwise-1.13 GB image to 1.95 GB. Use `COPY --chown=node:node`
+   throughout and chown only `/app/data`.
+3. **Pin the tooling stage to the app's exact Prisma version**, and have CI assert
+   `prisma` and `@prisma/client` agree.
+
+Two candidates from the pre-spike list are closed by measurement:
+`npm ci --omit=dev` **does not slim** (833 MB vs 999 MB — `next`/`@next`/`@prisma`
+are production dependencies and dominate), and precompiling the entrypoint to
+drop `tsx` saves only **11 MB** of 241 MB, not worth the divergence.
+
+The residual 298 MB is the Prisma CLI's own tree (`effect`, `@electric-sql`,
+`@prisma/studio-core` — Studio machinery `db push` never touches). If 549 MB is
+later judged too large, running migrations in a separate short-lived container is
+the next lever; the standalone bundle is only 60.7 MB and is not the problem.
+
+`openssl` is installed in the runner. Confirmed effective: the
+`Prisma failed to detect the libssl/openssl version` warning that appeared on
+every Prisma invocation in the first spike is absent from the slimmed runner's logs.
 
 ### `.dockerignore`
 
@@ -140,6 +170,9 @@ Lands with or before the Dockerfile, not after. The spike measured a
 (`better_sqlite3.node` = `Mach-O 64-bit bundle arm64`). It did not break that
 build, and the doc records this as inferred rather than observed — but it is a
 trap waiting for the first build step that touches a native addon.
+
+Landed with Task 3; the runner spike measured the result — **1.32 MB** of build
+context, down from 751.70 MB.
 
 ## 3. Entrypoint
 
@@ -245,8 +278,8 @@ duplicates it.
 | R3 | `node:22-slim` avoids compile-from-source | Spike: build-log grep | **Confirmed** — no `node-gyp`/`gyp info`/`make: Entering` |
 | R4 | Boot work is fast enough for a healthcheck | Spike: measured | **Confirmed** — 1.5–2.4 s to a DB-backed 200 |
 | R5 | Layered `node_modules` image size is acceptable | Spike: `docker history` | **Refuted as specified** — 1.25 GB, 927 MB of it unnecessary. Runner slimmed (§2) |
-| R6 | `next build` succeeds with an *unreachable* dummy Postgres URL | **Spike before Task 6**: build with a dummy URL pointing at nothing | Unproven |
-| R7 | The slimmed runner can still run `db push`, at an acceptable size | **Spike before Task 6**: run `db push` in the slimmed image; measure it | Unproven |
+| R6 | `next build` succeeds with an *unreachable* dummy Postgres URL | Spike: build with a dummy URL pointing at nothing | **Confirmed** — `postgres://build:build@127.0.0.1:1/build` built all 36 routes, exit 0, no connection attempt; reproduced in Docker. No throwaway Postgres needed in the builder |
+| R7 | The slimmed runner can still run `db push`, at an acceptable size | Spike: run `db push` in the slimmed image; measure it | **Confirmed for one mechanism only** — self-contained tooling tree merged into `/app/node_modules`: `db push` exit 0, `POST /api/leads` → `201`, **549 MB**. The preferred candidate (`npm ci --omit=dev`) is **refuted on size** — 833 MB. See §2 |
 
 ### Risk verification protocol
 
