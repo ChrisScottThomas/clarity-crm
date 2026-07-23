@@ -50,9 +50,10 @@ native modules.
 
 ## 2. Dockerfile
 
-Three stages on `node:22-slim`. Debian, not Alpine: `better-sqlite3` ships
-prebuilt binaries against glibc, and musl forces a compile-from-source with
-`python3`/`make`/`g++` in the build image.
+Three stages on `node:22-slim`. Debian, not Alpine, on the theory that
+`better-sqlite3` ships prebuilt binaries against glibc while musl forces a
+compile-from-source with `python3`/`make`/`g++` in the build image — **risk R3,
+confirmed by spike before it is relied on.**
 
 | Stage | Does |
 |-------|------|
@@ -163,11 +164,28 @@ duplicates it.
 
 ## Risks
 
-| Risk | Mitigation |
-|------|-----------|
-| **Next standalone tracing may not resolve a client regenerated after build.** The traced server resolves `app/generated/prisma` as it existed at build time. | **Open the implementation plan with a Docker spike** that proves boot-time regeneration works on both providers before anything is built on top — mirroring Phase 2's spike gate. If it fails, fall back to the build-arg variant (P3-1's runner-up). |
-| Native modules missing from the standalone trace | `serverExternalPackages`; the layered full `node_modules` also covers this |
-| Image size regression from the layered `node_modules` | Accepted for v1; slimming recorded as follow-up |
+Every row below is currently a **theory**. None may be treated as settled on
+reasoning alone — see "Risk verification protocol".
+
+| # | Risk | How it gets proven | Status |
+|---|------|--------------------|--------|
+| R1 | **Next standalone tracing may not resolve a client regenerated after build.** The traced server resolves `app/generated/prisma` as it existed at build time. | **Spike, gating all other work**: build the image, regenerate at boot on both providers, hit a real query. Mirrors Phase 2's spike gate. Fallback if it fails: the build-arg variant (P3-1's runner-up). | Unproven |
+| R2 | Native modules (`better-sqlite3`, `@prisma/adapter-pg`) may be missing from the standalone trace | Same spike — a SQLite *and* a Postgres query through the running container is the proof. `serverExternalPackages` and the layered `node_modules` are the intended mitigations, not evidence. | Unproven |
+| R3 | `node:22-slim` gives working `better-sqlite3` prebuilt binaries (the reason Alpine was rejected) | Spike: confirm no compile-from-source in the build log and a working SQLite query at runtime | Unproven |
+| R4 | Boot-time regeneration is fast enough not to break healthcheck start periods | Spike: measure it; feed the real number into the compose `start_period` rather than guessing one | Unmeasured |
+| R5 | Image size regression from the layered `node_modules` | Measure in the spike; record the actual number so the deferred slimming has a baseline | Unmeasured |
+
+### Risk verification protocol
+
+1. The implementation plan opens with a **spike task per unproven row**, before
+   any production artifact is written.
+2. A spike closes only on **observed output** — a build log, a container log, an
+   HTTP response, a measured number — not on reasoning.
+3. **This spec is updated with the findings** once the spikes land: each row's
+   Status becomes Confirmed or Refuted with the evidence, and any refuted theory
+   triggers a design revision here *before* implementation continues.
+4. R4 and R5 produce numbers that become real values in the compose files and
+   the deploy docs. No invented figures.
 
 ## Out of scope (explicit decisions, not oversights)
 
