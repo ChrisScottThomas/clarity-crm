@@ -4,6 +4,8 @@
 // than silently fall back to a well-known value (the old `?? 'dev'` footgun).
 // Outside production a dev fallback keeps local work frictionless.
 
+import { providerForUrl, parsePoolMax, DEFAULT_DATABASE_URL } from './db-adapter'
+
 const DEV_SESSION_SECRET = 'dev-insecure-secret-do-not-use-in-production'
 
 function isProduction(): boolean {
@@ -43,4 +45,35 @@ export function assertProductionSecrets(): void {
   // Each getter throws with a specific, actionable message when unset.
   getSessionSecret()
   getCrmPassword()
+}
+
+/**
+ * Boot-time guard: a malformed DATABASE_URL should die here, naming the
+ * accepted schemes, rather than surfacing later as an opaque Prisma error.
+ * Unset is valid — lib/db-adapter applies the sqlite dev default.
+ */
+export function assertDatabaseUrl(): void {
+  const url = process.env.DATABASE_URL
+  providerForUrl(url && url.length > 0 ? url : DEFAULT_DATABASE_URL)
+}
+
+/**
+ * Boot-time guard: DATABASE_POOL_MAX must be a positive integer if set at all.
+ * Checked regardless of provider — on SQLite the value is unused, but silently
+ * tolerating `abc` there just defers the failure to the day the operator
+ * switches to Postgres. Unset and empty are both valid (driver default).
+ */
+export function assertDatabasePoolMax(): void {
+  parsePoolMax(process.env.DATABASE_POOL_MAX)
+}
+
+/**
+ * Every boot-time guard in one call, for callers that want all of them:
+ * the instrumentation hook and the container's preflight check
+ * (scripts/check-runtime-env.ts).
+ */
+export function assertRuntimeEnv(): void {
+  assertProductionSecrets()
+  assertDatabaseUrl()
+  assertDatabasePoolMax()
 }

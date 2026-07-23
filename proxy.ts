@@ -10,6 +10,9 @@ export function proxy(req: NextRequest) {
     pathname.startsWith('/login') ||
     pathname.startsWith('/_next') ||
     pathname.startsWith('/favicon') ||
+    // Healthchecks (compose, Railway, CI) must not be redirected to /login —
+    // an auth redirect would make every probe report a false positive.
+    pathname === '/api/health' ||
     // Public webhooks self-authenticate via provider signature, not the session cookie.
     pathname.startsWith('/api/integrations/calcom/webhook')
   ) {
