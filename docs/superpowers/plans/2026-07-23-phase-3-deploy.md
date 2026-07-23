@@ -814,8 +814,9 @@ fi
 
 export DATABASE_URL="$DB_URL"
 
-# `db push` without --accept-data-loss: additive changes apply, destructive ones
-# stop the boot rather than silently dropping data.
+# `db push` with no data-loss override flag: additive changes apply, destructive
+# ones stop the boot rather than silently dropping data. (The flag's literal name
+# is deliberately absent — a test asserts it appears nowhere in this file.)
 echo "clarity: applying schema (provider: $BAKED)..."
 npm run db:push
 
