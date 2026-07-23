@@ -65,6 +65,8 @@ Make the change easy (extract config) before making the easy change. Structural 
 4. **Fix README:259** false Postgres claim with the real steps.
 5. **CI matrix:** run the suite against both providers (generate the right client per matrix leg).
 
+**Design pass done (2026-07-22)** — spec: [`../specs/2026-07-22-phase-2-dual-db-design.md`](../specs/2026-07-22-phase-2-dual-db-design.md), implementation plan: [`2026-07-22-phase-2-dual-db.md`](2026-07-22-phase-2-dual-db.md). Locked: **P2-1** build-step rewrite of the one canonical schema (no duplicated schema files); **P2-2** stay on `db push` for both providers — no migration history in v1, with a documented trigger (first production data you can't recreate) to adopt per-provider `prisma migrate`; **P2-3** full CI matrix (sqlite + postgres legs, real `db push` + CRUD smoke each). Scale posture: SQLite = single-node/small-team, Postgres = production/multi-user, pool sized via `DATABASE_POOL_MAX`.
+
 **Exit:** a deployer picks SQLite or Postgres via `DATABASE_URL` (+ the provider-selection step from #1); migrations reproducible; both pass CI.
 
 ## Phase 3 — Deploy & distribution

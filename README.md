@@ -30,17 +30,18 @@ Full reader-facing docs live in [`docs/`](docs/README.md), organised by the Diat
 ```bash
 npm install
 npm run db:push      # creates the SQLite DB at data/clarity.db and applies the schema
-npx prisma generate  # generates the Prisma client (required after every schema change)
+npm run db:generate  # generates the Prisma client (required after every schema change)
 npm run db:seed      # seeds booking-link settings only — NO leads
 ```
 
-> **After every `git pull` or schema change**, re-run `npx prisma generate`. The generated client at `app/generated/prisma/` is gitignored and not included in the repo. Skipping this step causes runtime errors like `Cannot read properties of undefined (reading 'findMany')` on any page that queries the database.
+> **After every `git pull` or schema change**, re-run `npm run db:generate`. The generated client at `app/generated/prisma/` is gitignored and not included in the repo. Skipping this step causes runtime errors like `Cannot read properties of undefined (reading 'findMany')` on any page that queries the database.
 
 Environment variables live in `.env.local` (git-ignored — you must create it).
 
 | Key | Example value | Notes |
 | --- | --- | --- |
 | `DATABASE_URL` | `file:./data/clarity.db` | SQLite file path |
+| `DATABASE_POOL_MAX` | _(unset — pg default, 10)_ | Postgres only: max connections in the app's pool. Lower it (e.g. 3–5) on serverless or many-replica deployments so combined replicas stay under the database's connection limit. |
 | `CRM_PASSWORD` | `clarity-dev` | Shared login password |
 | `SESSION_SECRET` | `dev-only-change-before-online` | HMAC key for the session cookie |
 | `TEAM_EMAILS` | `alex@example.com,jordan@example.com` | **Optional** — your team's mailboxes (comma-separated), excluded from lead matching. Defaults to placeholders |
@@ -89,7 +90,7 @@ Test coverage:
 
 Every PR (and every push to `main`) runs two workflows:
 
-- **CI** ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) — **blocking:** `prisma generate` → `tsc --noEmit` → `vitest run` → `next build`. **Report-only:** ESLint and the docs-updated check, which annotate but exit 0 so a red check always means a real failure.
+- **CI** ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) — **blocking (per provider — sqlite & postgres matrix):** `npm run db:generate` → `tsc --noEmit` → `vitest run` → `db push` + CRUD smoke → `next build`. **Report-only:** ESLint and the docs-updated check, which annotate but exit 0 so a red check always means a real failure.
 - **Security** ([`.github/workflows/security.yml`](.github/workflows/security.yml)) — **blocking:** gitleaks secret scan and the white-label integrity guard ([`scripts/check-white-label.mjs`](scripts/check-white-label.mjs)).
 
 **Docs are updated with every PR.** The report-only docs check ([`scripts/check-docs-updated.mjs`](scripts/check-docs-updated.mjs)) posts a warning when product code changes but no `docs/**` or markdown file does — a prompt to update the docs or note in the PR why none is needed. The [pull request template](.github/PULL_REQUEST_TEMPLATE.md) carries the same checklist. Both report-only checks are wired to flip to blocking later (lint once its debt clears; docs via `DOCS_CHECK_STRICT=1`).
@@ -265,9 +266,31 @@ Released under the [MIT License](LICENSE) — fork it, white-label it, deploy it
 
 When the app goes online:
 
-1. Swap SQLite → Postgres by changing `DATABASE_URL` (Prisma adapter swaps behind the same interface).
+1. Swap SQLite → Postgres by pointing `DATABASE_URL` at a Postgres server **and regenerating the client** — Prisma bakes the provider into the generated client, so the URL alone is not enough:
+
+   ```bash
+   export DATABASE_URL="postgres://user:pass@host:5432/clarity"
+   npm run db:generate   # regenerates the client for the postgresql provider
+   npm run db:push       # applies the schema
+   npm run db:seed       # optional: demo data
+   ```
+
+   Running against the wrong client (e.g. a sqlite-generated client with a postgres URL) fails at boot with Prisma's provider-mismatch error — rerun `npm run db:generate` under the correct `DATABASE_URL`.
 2. Set real `CRM_PASSWORD`, `SESSION_SECRET`, and optionally `ANTHROPIC_API_KEY` as Railway env vars — never commit secrets.
 3. Auth gate in `middleware.ts` stays on in production.
+
+### Scale & production data
+
+**Choosing a database.** SQLite is the small-scale default: one node, one team, modest write concurrency, and the database is a single file — put it on a mounted volume, and backup is copying the file. Postgres is the production/scale choice: concurrent multi-user writes, horizontal app scaling against one shared database, and managed hosting gives you backups, high availability, and point-in-time recovery. If you expect more than one app instance or can't afford to lose data between file copies, use Postgres.
+
+**Connection pooling (Postgres).** The app holds a connection pool sized by `DATABASE_POOL_MAX` (default: pg's 10). Long-lived containers can keep the default; serverless or many-replica deployments should lower it so `replicas × pool size` stays under the database's connection limit.
+
+**Schema changes on a live database.** This project applies schema with `prisma db push` and keeps no migration history (v1 stance — every instance starts empty). Additive changes apply cleanly. Destructive changes (dropping/retyping a column) will make `db push` demand `--accept-data-loss`:
+
+- **Back up before any schema change on a database with real data** (SQLite: copy the file; Postgres: `pg_dump` or your provider's snapshot).
+- **Never script or blindly pass `--accept-data-loss`.** A data-loss prompt is a stop-and-think signal.
+
+**When to adopt real migrations.** The trigger is explicit: **the first production instance holding data you cannot recreate**. At that point, switch from `db push` to `prisma migrate` with a per-provider migration history (`prisma migrate diff` can bootstrap the initial migration from the live schema for each provider). Until then, migration machinery is deliberate YAGNI.
 
 ## Roadmap (deferred)
 
@@ -284,5 +307,5 @@ When the app goes online:
 ## Known notes
 
 - **Next 16 deprecation warning.** `middleware.ts` prints a `middleware` → `proxy` notice at build time. It is harmless.
-- **Prisma client is git-ignored.** `app/generated/prisma` must be regenerated with `npx prisma generate` after every fresh clone or schema change. `npm run db:push` applies schema migrations but does NOT regenerate the client — run both.
+- **Prisma client is git-ignored.** `app/generated/prisma` must be regenerated with `npm run db:generate` after every fresh clone or schema change. `npm run db:push` applies schema migrations but does NOT regenerate the client — run both.
 - **Workflow rules are UI-only.** The Workflows page stores rules in the database but does not execute them — the execution engine is deferred.

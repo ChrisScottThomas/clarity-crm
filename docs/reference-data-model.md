@@ -1,13 +1,13 @@
 # Reference: Data Model
 
-Clarity CRM stores everything in a single SQLite database, accessed through Prisma. This document is the complete, field-by-field description of every model in [`prisma/schema.prisma`](../prisma/schema.prisma) and the shared vocabulary (stages, owners, sources, relationships, constraints) that lives in [`lib/constants.ts`](../lib/constants.ts).
+Clarity CRM stores everything in a single database — SQLite by default, Postgres for production scale — accessed through Prisma. This document is the complete, field-by-field description of every model in [`prisma/schema.prisma`](../prisma/schema.prisma) and the shared vocabulary (stages, owners, sources, relationships, constraints) that lives in [`lib/constants.ts`](../lib/constants.ts).
 
 For _why_ the model is shaped this way — the `client`-never-auto-set rule, `externalId` idempotency, the source-of-truth split — see [Explanation: Architecture](explanation-architecture.md). For how the data is read and written over HTTP, see [Reference: API](reference-api.md).
 
 ## Conventions
 
 - IDs are `cuid()` strings unless noted.
-- SQLite has no array or enum type. "Enums" are plain `String` columns constrained in application code (`lib/constants.ts`), and arrays are stored JSON-encoded (see `ExternalEvent.attendees`).
+- The schema stays portable across both providers by avoiding types not available in all of them (SQLite has no array or enum type). "Enums" are plain `String` columns constrained in application code (`lib/constants.ts`), and arrays are stored JSON-encoded (see `ExternalEvent.attendees`).
 - `DateTime` columns default to `now()` where a creation timestamp is implied.
 - A `?` after a type means the column is nullable/optional.
 

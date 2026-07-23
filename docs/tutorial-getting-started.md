@@ -30,11 +30,11 @@ Now create the database, generate the Prisma client, and seed the settings:
 
 ```bash
 npm run db:push      # creates data/clarity.db and applies the schema
-npx prisma generate  # generates the Prisma client into app/generated/prisma/
+npm run db:generate  # generates the Prisma client into app/generated/prisma/
 npm run db:seed      # seeds booking-link settings only — NO leads
 ```
 
-> **Why `npx prisma generate` matters:** the generated client is git-ignored and not in the repo. Skip this and any page that queries the database throws `Cannot read properties of undefined (reading 'findMany')`. Re-run it after every schema change or fresh clone.
+> **Why `npm run db:generate` matters:** the generated client is git-ignored and not in the repo. Skip this and any page that queries the database throws `Cannot read properties of undefined (reading 'findMany')`. Re-run it after every schema change or fresh clone.
 
 The seed deliberately adds **no leads** — you'll add your own next.
 
@@ -110,7 +110,7 @@ That's the core loop: **leads move through stages; activity — manual notes, ca
 
 | Symptom | Fix |
 | --- | --- |
-| `Cannot read properties of undefined (reading 'findMany')` | Run `npx prisma generate` — the client wasn't generated |
+| `Cannot read properties of undefined (reading 'findMany')` | Run `npm run db:generate` — the client wasn't generated |
 | Redirected to `/login` in a loop | Check `CRM_PASSWORD` in `.env.local` matches what you type |
 | Sync email does nothing | Your lead's `email` must be exactly `dana@acme.com` to match the mock fixture |
 | Port 3000 in use | Stop the other process, or run `npm run dev -- -p 3001` |

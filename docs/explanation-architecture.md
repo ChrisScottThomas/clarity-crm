@@ -112,7 +112,7 @@ A design rule that is more product than code, but shapes the schema: **the CRM d
 
 The mock-first bet only pays off if the swap is genuinely cheap. It is:
 
-1. **Database:** SQLite → Postgres by changing `DATABASE_URL`. The Prisma `better-sqlite3` adapter swaps behind the same client interface ([`lib/db.ts`](../lib/db.ts)).
+1. **Database:** SQLite → Postgres by pointing `DATABASE_URL` at a Postgres server and regenerating the client (`npm run db:generate`) — the provider is baked into the generated client, and [`lib/db.ts`](../lib/db.ts) picks the matching driver adapter (`better-sqlite3` or `pg`) from the URL scheme at runtime.
 2. **Integrations:** implement each `GraphXProvider` and flip its `export const xProvider = ...` line. Add auth to the two currently-open sync routes (they carry a `// TODO: protect when live`).
 3. **Secrets:** real `CRM_PASSWORD`, `SESSION_SECRET`, provider credentials as environment variables — never committed.
 
