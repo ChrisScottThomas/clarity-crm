@@ -73,11 +73,26 @@ Make the change easy (extract config) before making the easy change. Structural 
 
 Code nobody can deploy isn't shipped.
 
+**Design pass complete.** Spec: [`../specs/2026-07-23-phase-3-deploy-design.md`](../specs/2026-07-23-phase-3-deploy-design.md).
+Plan: [`2026-07-23-phase-3-deploy.md`](2026-07-23-phase-3-deploy.md).
+Spike evidence: [Docker](../spikes/2026-07-23-phase-3-docker-spike.md) (R1–R5),
+[runner](../spikes/2026-07-23-phase-3-runner-spike.md) (R6–R7).
+
 1. **`next.config.ts`:** add `output: 'standalone'`.
 2. **Dockerfile** (multi-stage) + **docker-compose** (volume for SQLite, or a Postgres service).
-3. **Host recipes:** Railway / Vercel / compose. SQLite → mounted volume; Postgres → managed DB.
-4. **CI (GitHub Actions):** typecheck + lint + test + build on PR (folds in the Phase 2 matrix).
+3. **Host recipes:** ~~Railway / Vercel / compose~~ → **Railway + compose**. Vercel and Fly.io
+   dropped: Vercel ignores the Dockerfile and standalone output entirely and cannot do SQLite,
+   so documenting it means maintaining a second, differently-shaped deployment model.
+4. **CI (GitHub Actions):** typecheck + lint + test + build on PR (folds in the Phase 2 matrix),
+   plus a `Docker · boot smoke` job that boots both provider stacks and asserts a provider
+   mismatch fails closed.
 5. Wire `.env` validation into the deploy docs.
+
+**Design change forced by the spike:** the original "one universal image, provider chosen at
+boot" idea is **impossible** — Next inlines the generated Prisma client, schema text included,
+into `.next/server/chunks` at build time, and Prisma 7's generator emits TypeScript. Provider is
+therefore a **build input** (`--build-arg DB_PROVIDER`), and a mismatch is caught at boot with a
+rebuild instruction rather than surfacing as a 500 on the first query.
 
 **Exit:** `docker compose up` (or a one-click host) yields a running, persistent instance from a clean fork.
 
