@@ -9,6 +9,7 @@
     "lint": "eslint",
     "test": "vitest run",
     "test:watch": "vitest",
+    "check:env": "tsx scripts/check-runtime-env.ts",
     "db:generate": "tsx scripts/prisma-provider.ts generate",
     "db:push": "tsx scripts/prisma-provider.ts db push",
     "db:smoke": "tsx scripts/db-smoke.ts",

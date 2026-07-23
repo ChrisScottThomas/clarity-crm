@@ -1,7 +1,10 @@
 data/
 node_modules/
-.env
-.env.local
+# Every dotenv variant, not just .env/.env.local: `next build` also loads
+# .env.production and .env.production.local, and a NEXT_PUBLIC_* value in one of
+# those gets inlined into the client bundle. .env.example is the one exception.
+.env*
+!.env.example
 .DS_Store
 .next/
 *.tsbuildinfo

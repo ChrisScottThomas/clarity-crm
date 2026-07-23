@@ -35,6 +35,16 @@ fi
 
 export DATABASE_URL="$DB_URL"
 
+# Preflight, BEFORE `db push`. instrumentation.ts runs the same guards, but Next
+# catches a throw from the instrumentation hook, logs an unhandledRejection and
+# keeps the port bound — the container stays Running=true and 500s forever. Only
+# Compose's ${VAR:?} interpolation caught that, so `docker run` and Railway had
+# no gate at all. This runs the guards in a short-lived process that really does
+# exit non-zero, and it runs first so a container that can never serve does not
+# get to mutate the schema of a live database on its way down.
+echo "clarity: validating configuration..."
+npm run check:env
+
 # `db push` with no data-loss override flag: additive changes apply, destructive
 # ones stop the boot rather than silently dropping data.
 echo "clarity: applying schema (provider: $BAKED)..."

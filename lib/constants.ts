@@ -53,7 +53,20 @@ export const SOURCE_LABELS: Record<string, string> = {
 // Our own team mailboxes — excluded when matching a synced email's counterpart to a lead,
 // so an internal recipient never matches as the "lead". Real addresses arrive with the Graph provider.
 // Configure per deployment via TEAM_EMAILS (comma-separated); defaults are placeholders.
-export const TEAM_EMAILS: readonly string[] = (process.env.TEAM_EMAILS ?? 'alex@example.com,jordan@example.com')
-  .split(',')
-  .map((e) => e.trim().toLowerCase())
-  .filter(Boolean)
+//
+// Empty and whitespace-only count as unset, deliberately. `??` alone was a bug:
+// both compose files pass `TEAM_EMAILS: ${TEAM_EMAILS:-}`, which sets the
+// variable to an EMPTY STRING rather than leaving it unset — `'' ?? default` is
+// `''`, which splits to `['']` and filters to `[]`. An empty list makes
+// lib/email-sync.ts's `.filter(addr => !TEAM_EMAILS.includes(addr))` exclude
+// nobody, i.e. exactly the bug this constant exists to prevent. Same
+// missing-or-empty style as lib/env.ts.
+const DEFAULT_TEAM_EMAILS = 'alex@example.com,jordan@example.com'
+
+function parseTeamEmails(raw: string): string[] {
+  return raw.split(',').map((e) => e.trim().toLowerCase()).filter(Boolean)
+}
+
+const configuredTeamEmails = parseTeamEmails(process.env.TEAM_EMAILS ?? '')
+export const TEAM_EMAILS: readonly string[] =
+  configuredTeamEmails.length > 0 ? configuredTeamEmails : parseTeamEmails(DEFAULT_TEAM_EMAILS)

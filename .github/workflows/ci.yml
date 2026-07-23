@@ -197,3 +197,39 @@ jobs:
             exit 1
           fi
           echo "provider mismatch correctly rejected"
+
+      # Regression test for the review's F1/F2/F4. Next CATCHES a throw from the
+      # instrumentation hook, logs an unhandledRejection and keeps the port
+      # bound — so the container used to sit there Running=true, exit code 0,
+      # serving 500s, having already run `db push` against a live database.
+      # Compose's ${VAR:?} guards hid this; `docker run` and Railway had no gate.
+      # The entrypoint preflight must exit non-zero, and must do so BEFORE the
+      # schema step. Both halves are asserted here.
+      - name: Missing secret must fail closed, before touching the database
+        run: |
+          set +e
+          out="$(docker run --rm -e CRM_PASSWORD=ci-not-a-real-password clarity-crm:sqlite 2>&1)"
+          code=$?
+          set -e
+          echo "$out"
+          if [ "$code" -eq 0 ]; then
+            echo "::error::container booted without SESSION_SECRET (exit 0) — the preflight is broken"
+            exit 1
+          fi
+          if echo "$out" | grep -q "applying schema"; then
+            echo "::error::db push ran before the config was validated"
+            exit 1
+          fi
+          echo "missing SESSION_SECRET correctly rejected with exit $code, before db push"
+
+      - name: Invalid DATABASE_POOL_MAX must fail closed
+        run: |
+          if docker run --rm \
+              -e SESSION_SECRET=ci-not-a-real-secret \
+              -e CRM_PASSWORD=ci-not-a-real-password \
+              -e DATABASE_POOL_MAX=abc \
+              clarity-crm:sqlite; then
+            echo "::error::container booted with DATABASE_POOL_MAX=abc"
+            exit 1
+          fi
+          echo "invalid DATABASE_POOL_MAX correctly rejected"

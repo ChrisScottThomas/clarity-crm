@@ -29,7 +29,12 @@ export function chooseAdapter(url: string | undefined, poolMax?: string): Adapte
 // Pool sizing matters at scale: long-lived containers can afford the pg
 // default (10); serverless/many-replica deployments must keep this low or
 // they exhaust the database's connection limit.
-function parsePoolMax(poolMax: string | undefined): number | undefined {
+//
+// Exported so the boot-time guard (lib/env.ts) can validate the value even on
+// SQLite, where `chooseAdapter` never reaches this branch. A nonsense value is
+// a misconfiguration whichever provider is in play, and finding out at boot
+// beats finding out on the day someone switches to Postgres.
+export function parsePoolMax(poolMax: string | undefined): number | undefined {
   if (poolMax === undefined || poolMax === '') return undefined
   const n = Number(poolMax)
   if (!Number.isInteger(n) || n < 1) {

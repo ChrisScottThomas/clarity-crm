@@ -25,6 +25,30 @@ describe('docker-entrypoint.sh', () => {
     expect(serve).toBeGreaterThan(push)
   })
 
+  // Next catches a throw from the instrumentation hook and keeps the port
+  // bound, so in-process validation cannot stop a container. The preflight runs
+  // the same guards in a process that exits non-zero.
+  it('validates the environment in a process that can actually die', () => {
+    expect(script).toContain('check:env')
+  })
+
+  // A container that can never serve must not get to mutate the schema of a
+  // live database on its way down.
+  it('validates the environment BEFORE touching the database', () => {
+    const check = script.indexOf('check:env')
+    const push = script.indexOf('db:push')
+    expect(check).toBeGreaterThan(-1)
+    expect(push).toBeGreaterThan(check)
+  })
+
+  // The provider-mismatch guard predates the preflight and must keep its place.
+  it('still rejects a mismatched provider before touching the database', () => {
+    const mismatch = script.indexOf('CLARITY_DB_PROVIDER')
+    const push = script.indexOf('db:push')
+    expect(mismatch).toBeGreaterThan(-1)
+    expect(push).toBeGreaterThan(mismatch)
+  })
+
   // Spike A proved boot regeneration is useless: Next inlines the client.
   it('does not waste a second regenerating a client that is already baked in', () => {
     expect(script).not.toContain('db:generate')

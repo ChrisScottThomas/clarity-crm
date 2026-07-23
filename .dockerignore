@@ -2,8 +2,11 @@ node_modules
 .next
 data
 .git
-.env
-.env.local
+# Every dotenv variant. The builder does `COPY . .`, and `next build` loads
+# .env.production / .env.production.local — so a stray one in the context would
+# be read at build time and any NEXT_PUBLIC_* value inlined into the bundle.
+.env*
+!.env.example
 .claude
 docs
 tests

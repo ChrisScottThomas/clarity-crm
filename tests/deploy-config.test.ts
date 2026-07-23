@@ -36,7 +36,21 @@ describe('.dockerignore', () => {
     }
   })
 
-  it('keeps secrets out of the build context', () => {
-    expect(ignore).toContain('.env')
+  // `.env` and `.env.local` alone were not enough: the builder does `COPY . .`
+  // and `next build` also loads .env.production / .env.production.local, so a
+  // forker following normal Next convention could get NEXT_PUBLIC_* values
+  // inlined into the client bundle from a file nobody meant to ship.
+  it('keeps every dotenv variant out of the build context', () => {
+    expect(ignore).toContain('.env*')
+    expect(ignore).toContain('!.env.example')
+  })
+})
+
+describe('.gitignore', () => {
+  const ignore = readFileSync('.gitignore', 'utf8')
+
+  it('keeps every dotenv variant out of the repository except the example', () => {
+    expect(ignore).toContain('.env*')
+    expect(ignore).toContain('!.env.example')
   })
 })
