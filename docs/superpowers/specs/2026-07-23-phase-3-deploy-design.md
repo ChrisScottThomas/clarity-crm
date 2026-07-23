@@ -14,6 +14,7 @@
 | 2026-07-23 | Original design: one universal image regenerating the Prisma client at boot |
 | 2026-07-23 | **Revised** after spike: R1 refuted, R5 refuted as specified. Provider becomes a *build input*; the runner is slimmed |
 | 2026-07-23 | **Revised** after the runner spike: R6 confirmed (dummy unreachable build URL is safe); R7 confirmed at 549 MB, but only via a self-contained tooling tree — `npm ci --omit=dev` refuted on size. §2 now names the mechanism |
+| 2026-07-23 | **Implemented** and merged-ready as [PR #8](https://github.com/ChrisScottThomas/clarity-crm/pull/8). Shipped images measure 543/544 MB. All five CI checks green, including the new `Docker · boot smoke`; ruleset 19571458 updated to require it |
 
 ## Context
 
@@ -124,8 +125,12 @@ modules) and measured its cost (R5: **927 MB** of a **1.25 GB** image).
 
 **The runner ships the standalone bundle plus a self-contained tooling tree
 holding only the `prisma` CLI and `tsx`, merged into `/app/node_modules`, with
-the standalone tree copied last.** Measured: **549 MB**, `db push` exit 0,
-`POST /api/leads` → `201` against a real Postgres.
+the standalone tree copied last.** Measured in the spike: **549 MB**, `db push`
+exit 0, `POST /api/leads` → `201` against a real Postgres.
+
+**As shipped:** the production images measure **543 MB** (sqlite) and **544 MB**
+(postgres) — within 1% of the spike, so nothing regressed between prototype and
+artifact.
 
 ```dockerfile
 # Order is load-bearing: tooling first, standalone last, so the traced tree
