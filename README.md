@@ -9,7 +9,7 @@ An open-source CRM web app for small advisory, consulting, and services teams. I
 Full reader-facing docs live in [`docs/`](docs/README.md), organised by the Diataxis framework:
 
 - **[Getting Started tutorial](docs/tutorial-getting-started.md)** — clone → running CRM → first lead → first email sync.
-- **How-to:** [Integrations](docs/howto-integrations.md) (Outlook email/calendar sync, cal.com webhook, going live) · [Workflows](docs/howto-workflows.md) (automation rules).
+- **How-to:** [Deploying](docs/deploying.md) (Docker Compose quickstarts, env vars, backups, Railway) · [Integrations](docs/howto-integrations.md) (Outlook email/calendar sync, cal.com webhook, going live) · [Workflows](docs/howto-workflows.md) (automation rules).
 - **Reference:** [Data Model](docs/reference-data-model.md) · [HTTP API](docs/reference-api.md).
 - **Explanation:** [Architecture](docs/explanation-architecture.md) — the mock-first seam, the pure-core/effectful-shell split, and the `client`-never-auto-set guardrail.
 
@@ -262,22 +262,20 @@ No real customer data ships in this repo — the pipeline is empty by design and
 
 Released under the [MIT License](LICENSE) — fork it, white-label it, deploy it.
 
-## Deploying (future — not done yet)
+## Deploying
 
-When the app goes online:
+The app ships as a Docker image built from this repo, with a Compose file per database. Put `SESSION_SECRET` and `CRM_PASSWORD` in a `.env` at the repo root (Compose reads that file — see [`.env.example`](.env.example)), then:
 
-1. Swap SQLite → Postgres by pointing `DATABASE_URL` at a Postgres server **and regenerating the client** — Prisma bakes the provider into the generated client, so the URL alone is not enough:
+```bash
+docker compose up -d                                    # SQLite
+docker compose -f docker-compose.postgres.yml up -d     # Postgres (also needs POSTGRES_PASSWORD)
+```
 
-   ```bash
-   export DATABASE_URL="postgres://user:pass@host:5432/clarity"
-   npm run db:generate   # regenerates the client for the postgresql provider
-   npm run db:push       # applies the schema
-   npm run db:seed       # optional: demo data
-   ```
+Either way the app is on **http://localhost:3000**, and `/api/health` returns `{"status":"ok"}` once the database is reachable.
 
-   Running against the wrong client (e.g. a sqlite-generated client with a postgres URL) fails at boot with Prisma's provider-mismatch error — rerun `npm run db:generate` under the correct `DATABASE_URL`.
-2. Set real `CRM_PASSWORD`, `SESSION_SECRET`, and optionally `ANTHROPIC_API_KEY` as Railway env vars — never commit secrets.
-3. Auth gate in `middleware.ts` stays on in production.
+**Each image is built for exactly one provider.** Next inlines the generated Prisma client into the server bundle at build time, so switching between SQLite and Postgres means rebuilding (`… up -d --build`), not editing `DATABASE_URL`. Point a mismatched URL at an existing image and the container refuses to boot and prints the rebuild command — deliberately, because the alternative is an app that serves pages and fails every query.
+
+Full guide — environment variables, volumes and backup, a Railway recipe, and why TLS is the operator's job: **[docs/deploying.md](docs/deploying.md)**.
 
 ### Scale & production data
 

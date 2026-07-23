@@ -14,6 +14,7 @@ New here? Start with the tutorial. Looking something up? Jump to reference. Tryi
 
 | Doc | Task |
 | --- | --- |
+| [Deploying](deploying.md) | Run the app under Docker Compose on SQLite or Postgres, set the environment, back up your data, deploy to Railway, and understand why TLS is your job. |
 | [Integrations](howto-integrations.md) | Run Outlook email & calendar sync, wire the cal.com webhook, and swap a mock provider for the real one when going live. |
 | [Workflows](howto-workflows.md) | Build automation rules, understand the trigger/action vocabulary, and run live vs. time-based rules. |
 
