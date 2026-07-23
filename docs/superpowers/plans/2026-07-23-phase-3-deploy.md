@@ -16,20 +16,18 @@
 
 ## Ground rules for this plan
 
-**Phase A is a spike gate, and it has already fired once.** Tasks 1–2 are
-complete: R1 and R5 were refuted, the spec was revised, and this plan rewritten.
-**Task 2b is a second gate** covering the two risks the revision introduced
-(R6, R7). Nothing in Phase B past Task 5 may be written until R6 and R7 read
-Confirmed. If a spike refutes a theory, stop and revise the spec — do not patch
-around it.
+**Phase A is complete, and the gate fired once.** Tasks 1, 2 and 2b are done:
+R1 and R5 refuted (spec revised, plan rewritten), R6 and R7 confirmed. Phase B
+may proceed. If a future spike refutes a theory, stop and revise the spec — do
+not patch around it.
 
 **Spike code is throwaway.** It lives in the scratchpad, never in the repo. Only
 the *findings* are committed.
 
 **Measured numbers are real numbers.** R4 settled the healthcheck `start_period`
-at **30s** (measured worst case 2.4 s to a DB-backed 200). R7 will settle the
-image size that goes into the deploy docs. Never substitute a plausible-looking
-figure for one you can measure.
+at **30s** (measured worst case 2.4 s to a DB-backed 200). R7 settled the image
+size at **549 MB**, which goes into the deploy docs. Never substitute a
+plausible-looking figure for one you can measure.
 
 **Task 3 also lands `.dockerignore`.** Spike A measured a 751.70 MB build context
 carrying a macOS-native `node_modules` that `COPY . .` layers over the Linux one.
@@ -82,91 +80,24 @@ against the revised spec.
 
 ---
 
-### Task 2b: Prove R6 and R7 — GATE
+### Task 2b: Prove R6 and R7 — ✅ COMPLETE
 
-**Files:**
-- Create: `docs/superpowers/spikes/2026-07-23-phase-3-runner-spike.md`
-- Scratch (never committed): `$SCRATCH/Dockerfile.spike2`
+Executed 2026-07-23. Findings: [`../spikes/2026-07-23-phase-3-runner-spike.md`](../spikes/2026-07-23-phase-3-runner-spike.md) (commit `0fe2765`).
 
-The revision introduced two unproven theories. Both must be settled before the
-Dockerfile is written.
+- [x] R6 **Confirmed** — `next build` only *constructs* PrismaClient, never connects. `postgres://build:build@127.0.0.1:1/build` emitted all 36 routes, exit 0, no connection attempt. No credentials in image history, no throwaway database in the build.
+- [x] R7 **Confirmed at 549 MB** — but only via variant D (a self-contained tooling tree merged into `/app/node_modules`, standalone copied last). `db push` exit 0; `POST /api/leads` → 201 against real Postgres.
 
-| # | Theory | Evidence that settles it |
-|---|--------|--------------------------|
-| R6 | `next build` succeeds with an **unreachable** dummy Postgres URL | A completed build using a URL pointing at nothing |
-| R7 | A slimmed runner can still run `db push`, at an acceptable size | `db push` succeeding in the slimmed image, plus a measured size |
+Three findings that changed Task 6, each from an observed failure:
 
-R6 matters because a *reachable* URL means baking real credentials into image
-history. Spike A used a reachable one, so this is genuinely open.
+- **`npm ci --omit=dev` does not slim** — 833 MB vs 999 MB. `next`/`@next` (411 MB) and `@prisma` (167 MB) are *production* dependencies; devDeps were never the bulk. The spec's preferred candidate is refuted on size.
+- **`RUN chown -R node:node /app` costs 819 MB.** It rewrites every file's metadata, so the layer holds a second complete copy — taking a 1.13 GB image to 1.95 GB. The line looks like housekeeping.
+- **`npx` ignores `PATH`.** A tooling tree at `/opt/tooling` resolved `prisma` fine via `which`, yet `npx prisma` network-installed **7.9.0** at container boot against the **7.8.0** baked client. Also, `prisma.config.ts`'s `import "dotenv/config"` resolves from `/app`. Both say the tooling must live *at* `/app/node_modules`.
 
-- [ ] **Step 1: Settle R6 — build with a dummy unreachable Postgres URL**
+Also closed by measurement: precompiling the entrypoint to drop `tsx` saves 11 MB of 241 MB — not worth the divergence. Build context is now **1.32 MB**, down from 751.70 MB, thanks to Task 3's `.dockerignore`.
 
-Temporarily add `output: 'standalone'` to `next.config.ts` (uncommitted; revert after).
+Residual weight is Prisma's CLI (~298 MB of Studio machinery `db push` never touches). If 549 MB is later too large, a separate migration container is the next lever — not measured.
 
-```bash
-cd /Users/chris.scott-thomas/github/clarity-crm/.claude/worktrees/session-c77cb5
-DATABASE_URL="postgres://build:build@127.0.0.1:1/build" npm run db:generate
-DATABASE_URL="postgres://build:build@127.0.0.1:1/build" npx next build 2>&1 | tee "$SCRATCH/r6-build.log"
-echo "exit: $?"
-```
-
-Port 1 is guaranteed closed. Expected if R6 holds: build completes. If it fails,
-capture the verbatim error — the fallback is standing up a throwaway Postgres in
-the builder stage, which is a real complication and must be recorded as such.
-
-- [ ] **Step 2: Measure the prod-only dependency tree (R7, candidate 1)**
-
-```bash
-docker run --rm -v "$PWD":/src -w /tmp node:22-slim sh -c \
-  "cp /src/package.json /src/package-lock.json . && npm ci --omit=dev >/dev/null 2>&1 && du -sh node_modules && ls node_modules/.bin | grep -E '^(prisma|tsx)$'"
-```
-
-Records the prod-only tree size and confirms whether `prisma` and `tsx` binaries
-are present. Note: this only works once Task 3 has moved `tsx` into
-`dependencies` — if `tsx` is missing here, that is expected and confirms the
-dependency move is load-bearing rather than cosmetic.
-
-- [ ] **Step 3: Settle R7 — build a slimmed runner and run `db push` in it**
-
-Write `$SCRATCH/Dockerfile.spike2` using the winning candidate from Step 2:
-standalone bundle + the prod-only tooling, `openssl` installed, non-root user.
-Build it, start a `postgres:16` alongside, and run `db push` inside the container
-against the real database.
-
-```bash
-docker images clarity-runner-spike --format '{{.Size}}'
-```
-
-Expected: `db push` succeeds and the size is far below Spike A's 1.25 GB. Record
-the actual number — it goes into the deploy docs.
-
-- [ ] **Step 4: Tear down and revert**
-
-```bash
-docker rm -f $(docker ps -aq --filter "name=spike2") 2>/dev/null || true
-docker rmi clarity-runner-spike 2>/dev/null || true
-git checkout next.config.ts
-```
-
-- [ ] **Step 5: Write the findings and update the spec**
-
-Create `docs/superpowers/spikes/2026-07-23-phase-3-runner-spike.md` with a
-section per risk: theory, **verbatim observed output**, verdict. Then set R6 and
-R7's Status in the spec's risk table, and fix §2's "Runner contents" to name the
-mechanism that actually won rather than listing three candidates.
-
-- [ ] **Step 6: Commit**
-
-```bash
-git add docs/superpowers/spikes/2026-07-23-phase-3-runner-spike.md docs/superpowers/specs/2026-07-23-phase-3-deploy-design.md
-git commit -m "docs: Phase 3 runner spike findings (R6, R7)"
-git status --porcelain
-```
-
-Expected: clean tree, no scratch files, `next.config.ts` unmodified.
-
-**GATE: Task 6 may not start until R6 and R7 read Confirmed.** Tasks 3–5 are
-independent of both and may proceed regardless.
+---
 
 # Phase B — Production artifacts
 
@@ -544,9 +475,10 @@ git commit -m "feat(deploy): fail boot on an unmappable DATABASE_URL"
 - Create: `Dockerfile`
 - Test: `tests/dockerfile.test.ts`
 
-**Depends on Task 2b.** The runner's tooling layer below uses candidate 1 (a
-production-only install). **If Task 2b's findings selected a different mechanism,
-the findings doc is authoritative — use what actually worked.**
+**Shape is settled by [the runner spike](../spikes/2026-07-23-phase-3-runner-spike.md)** —
+variant D, measured at 549 MB with `db push` exit 0 and `POST /api/leads` → 201
+against real Postgres. Three of its lines look like harmless housekeeping and are
+not; each carries a comment explaining the measured cost of getting it wrong.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -583,13 +515,42 @@ describe('Dockerfile', () => {
     expect(build).toContain('DATABASE_URL')
   })
 
-  // A real URL at build time would bake credentials into image history.
+  // R6: next build only *constructs* the client, never connects — so the build
+  // URL can be unreachable, and must be, or credentials land in image history.
   it('uses an unreachable dummy URL at build time, never a real one', () => {
     expect(dockerfile).toContain('127.0.0.1:1')
   })
 
   it('installs openssl so Prisma can detect libssl', () => {
     expect(dockerfile).toContain('openssl')
+  })
+
+  // R7 finding: `npx` ignores PATH. A tooling tree beside /app/node_modules let
+  // `npx prisma` silently network-install 7.9.0 against a 7.8.0 baked client.
+  it('merges the tooling tree into /app/node_modules, not beside it', () => {
+    expect(dockerfile).toMatch(/COPY --from=tooling[^\n]*\.\/node_modules/)
+  })
+
+  // Order is load-bearing: reversing it lets the CLI's transitive react-dom and
+  // next overwrite the app's own.
+  it('copies the standalone tree after the tooling tree', () => {
+    const tooling = dockerfile.search(/COPY --from=tooling/)
+    const standalone = dockerfile.search(/COPY --from=builder[^\n]*standalone/)
+    expect(tooling).toBeGreaterThan(-1)
+    expect(standalone).toBeGreaterThan(tooling)
+  })
+
+  // Measured: `RUN chown -R` on /app rewrites every file's metadata and writes a
+  // second full copy into the layer — 819 MB, taking 1.13 GB to 1.95 GB.
+  it('never recursively chowns the whole app directory', () => {
+    expect(dockerfile).not.toMatch(/chown -R[^\n]*\/app\s*$/m)
+    expect(dockerfile).not.toMatch(/chown -R node:node \/app\b(?!\/data)/)
+  })
+
+  // Variant C proved a floating CLI version is not a theoretical risk.
+  it('pins the tooling versions from the lockfile rather than hardcoding them', () => {
+    expect(dockerfile).toContain('package-lock.json')
+    expect(dockerfile).toMatch(/node_modules\/prisma/)
   })
 
   it('runs as a non-root user', () => {
@@ -625,13 +586,17 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
 
-# Production-only tree: supplies the prisma CLI and tsx that the entrypoint's
-# `db push` needs. The traced standalone bundle already carries the driver
-# adapters and native modules (spike R2), so this layer exists only for the CLI.
+# A self-contained tooling tree: just the prisma CLI and tsx, which the
+# entrypoint's `db push` needs and the traced standalone bundle lacks. Versions
+# come from the lockfile, never a floating range — an unresolvable `npx prisma`
+# once silently fetched 7.9.0 against a 7.8.0 baked client.
 FROM node:22-slim AS tooling
-WORKDIR /tools
-COPY package.json package-lock.json ./
-RUN npm ci --omit=dev
+WORKDIR /opt/tooling
+COPY package-lock.json /tmp/package-lock.json
+RUN PRISMA_V="$(node -p "require('/tmp/package-lock.json').packages['node_modules/prisma'].version")" \
+ && TSX_V="$(node -p "require('/tmp/package-lock.json').packages['node_modules/tsx'].version")" \
+ && npm init -y > /dev/null \
+ && npm install --omit=dev "prisma@${PRISMA_V}" "tsx@${TSX_V}"
 
 FROM node:22-slim AS builder
 ARG DB_PROVIDER
@@ -639,8 +604,9 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 # A dummy URL of the correct scheme. next build instantiates PrismaClient during
-# page-data collection, so DATABASE_URL must be set — but a real one would bake
-# credentials into image history. Port 1 is closed by definition.
+# page-data collection, so DATABASE_URL must be set — but it never connects, so
+# the URL can and must be unreachable: a real one would bake credentials into
+# image history. Port 1 is closed by definition.
 RUN case "$DB_PROVIDER" in \
       sqlite)   echo 'file:./data/build.db' > /tmp/build-url ;; \
       postgres) echo 'postgres://build:build@127.0.0.1:1/build' > /tmp/build-url ;; \
@@ -658,29 +624,35 @@ ENV HOSTNAME=0.0.0.0
 # Read by docker-entrypoint.sh to reject a mismatched DATABASE_URL at boot.
 ENV CLARITY_DB_PROVIDER=${DB_PROVIDER}
 
-# Without this every Prisma invocation warns that it cannot detect libssl.
+# Without this every Prisma invocation warns it cannot detect libssl.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends openssl \
  && rm -rf /var/lib/apt/lists/*
 
-COPY --from=builder /app/.next/standalone ./
-COPY --from=builder /app/.next/static ./.next/static
-COPY --from=builder /app/public ./public
+# ORDER IS LOAD-BEARING. The tooling tree goes down first so the traced
+# standalone tree lands on top and wins every filename conflict; reversed, the
+# CLI's transitive react-dom and next overwrite the app's own.
+# It must also merge INTO ./node_modules rather than sit beside it: `npx`
+# ignores PATH, and prisma.config.ts's `import "dotenv/config"` resolves from
+# /app. Both were observed failures, not hypotheticals.
+COPY --from=tooling --chown=node:node /opt/tooling/node_modules ./node_modules
+COPY --from=builder --chown=node:node /app/.next/standalone ./
+COPY --from=builder --chown=node:node /app/.next/static ./.next/static
+COPY --from=builder --chown=node:node /app/public ./public
+COPY --from=builder --chown=node:node /app/prisma ./prisma
+COPY --from=builder --chown=node:node /app/prisma.config.ts ./prisma.config.ts
+COPY --from=builder --chown=node:node /app/scripts ./scripts
+COPY --from=builder --chown=node:node /app/lib ./lib
+COPY --from=builder --chown=node:node /app/package.json ./package.json
+COPY --chown=node:node docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 
-# Layered second so the CLI-bearing production tree wins over the traced subset.
-COPY --from=tooling /tools/node_modules ./node_modules
-
-COPY --from=builder /app/prisma ./prisma
-COPY --from=builder /app/prisma.config.ts ./prisma.config.ts
-COPY --from=builder /app/scripts ./scripts
-COPY --from=builder /app/lib ./lib
-COPY --from=builder /app/package.json ./package.json
-COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
-
-# db push writes a SQLite file into data/; the runtime user must own it.
+# Every COPY above sets ownership inline, deliberately. A `RUN chown -R` over
+# /app rewrites every file's metadata and so writes a second complete copy into
+# the layer — measured at 819 MB, turning a 1.13 GB image into 1.95 GB. Only the
+# small, initially-empty data directory is chowned here.
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh \
  && mkdir -p /app/data \
- && chown -R node:node /app
+ && chown node:node /app/data
 
 USER node
 EXPOSE 3000
@@ -690,9 +662,9 @@ ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `npx vitest run tests/dockerfile.test.ts`
-Expected: PASS (8 tests).
+Expected: PASS (12 tests).
 
-- [ ] **Step 5: Verify both variants build**
+- [ ] **Step 5: Verify both variants build, and check the size**
 
 ```bash
 docker build --build-arg DB_PROVIDER=sqlite -t clarity-crm:sqlite .
@@ -700,10 +672,19 @@ docker build --build-arg DB_PROVIDER=postgres -t clarity-crm:postgres .
 docker images --format '{{.Repository}}:{{.Tag}} {{.Size}}' | grep clarity-crm
 ```
 
-Expected: both build; sizes far below Spike A's 1.25 GB. Record the actual figures
-— they go into the deploy docs in Task 11.
+Expected: both build; each around **549 MB** (the spike's measured variant D).
+**If either is materially larger — say past 700 MB — something regressed;
+`docker history` will show which layer.** Record the actual figures for Task 11.
 
-Also confirm the invalid case is rejected:
+Confirm the CLI matches the baked client, per the spike's variant-C failure:
+
+```bash
+docker run --rm clarity-crm:sqlite sh -c 'node -p "require(\"/app/node_modules/prisma/package.json\").version"; node -p "require(\"/app/node_modules/@prisma/client/package.json\").version"'
+```
+
+Expected: two identical version strings.
+
+Confirm an invalid provider is rejected:
 
 ```bash
 docker build --build-arg DB_PROVIDER=mysql -t clarity-crm:bad . 2>&1 | tail -3
@@ -1363,8 +1344,8 @@ npm run db:generate && npx tsc --noEmit && npx vitest run
 ```
 
 Expected: tsc clean; all tests pass. Baseline entering Phase 3 was **190**; this
-plan adds 40 (Task 3: 5, Task 4: 5, Task 5: 4, Task 6: 8, Task 7: 8, Task 8: 10),
-so expect **230**. If the count differs, find out why before moving on.
+plan adds 44 (Task 3: 5, Task 4: 5, Task 5: 4, Task 6: 12, Task 7: 8, Task 8: 10),
+so expect **234**. If the count differs, find out why before moving on.
 
 - [ ] **Step 2: Re-verify both providers on the host**
 
